@@ -1,8 +1,12 @@
 <!DOCTYPE html>
 <!--
   ════════════════════════════════════════════════════════════
-  PANAR — CAJA REGISTRADORA PARA PANADERÍAS — v1.0
+  PANAR — CAJA REGISTRADORA PARA PANADERÍAS — v1.1
   Fecha de esta versión: 2026-06-29
+  Cambios respecto a v1.0: conectado al proyecto Firebase real
+  panar-b08f1. Requiere activar Authentication (Email/contraseña,
+  Google, Anónimo) y agregar raventechs.lat en Authorized domains.
+  ──
   Clon exacto de PizzAR v2.4 (mismo motor, mismas lógicas: roles
   Dueño/Punto de Venta, Stock con receta por tamaño/variante,
   Historial con filtro de fechas, features plus, acceso oculto
@@ -640,12 +644,12 @@
 <script>
   /* ════════ FIREBASE CONFIG — REEMPLAZAR CON LOS DATOS REALES DEL PROYECTO ════════ */
   const firebaseConfig = {
-    apiKey: "TU_API_KEY",
-    authDomain: "panar-XXXX.firebaseapp.com",
-    projectId: "panar-XXXX",
-    storageBucket: "panar-XXXX.appspot.com",
-    messagingSenderId: "XXXXXXXXXX",
-    appId: "XXXXXXXXXXXXXXXXXXXXX"
+    apiKey: "AIzaSyCM_V4a6QtXtCKzrCGF2eLVTLxT5aOGlCU",
+    authDomain: "panar-b08f1.firebaseapp.com",
+    projectId: "panar-b08f1",
+    storageBucket: "panar-b08f1.firebasestorage.app",
+    messagingSenderId: "984331564649",
+    appId: "1:984331564649:web:a58cea3d04fdecccaa14f8"
   };
   firebase.initializeApp(firebaseConfig);
   const auth = firebase.auth();
