@@ -58,12 +58,14 @@
     --border: rgba(120,70,40,0.15);
   }
 
+  html { overflow-x: hidden; }
   body {
     background: var(--bg);
     color: var(--crema);
     font-family: 'Poppins', sans-serif;
     min-height: 100vh;
     transition: background 0.3s, color 0.3s;
+    overflow-x: hidden;
   }
 
   /* ── PANTALLA DE CARGA ── */
@@ -112,6 +114,7 @@
     font-size: 0.95rem;
     margin-bottom: 0.8rem;
     font-family: inherit;
+    box-sizing: border-box;
   }
   .login-box input:focus { outline: none; border-color: var(--border-hover); }
   .btn-tomate {
@@ -175,7 +178,7 @@
   }
   .tab-btn.active { color: var(--tomate); border-bottom-color: var(--tomate); }
 
-  main { flex: 1; padding: 1rem; max-width: 1100px; width: 100%; margin: 0 auto; }
+  main { flex: 1; padding: 1rem; max-width: 1100px; width: 100%; margin: 0 auto; box-sizing: border-box; }
   .view { display: none; }
   .view.active { display: block; }
 
@@ -232,7 +235,7 @@
   /* ── MODAL ── */
   .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 200; align-items: center; justify-content: center; padding: 1rem; }
   .modal-overlay.active { display: flex; }
-  .modal-box { background: var(--bg2); border-radius: 14px; padding: 1.5rem; max-width: 420px; width: 100%; max-height: 88vh; overflow-y: auto; }
+  .modal-box { background: var(--bg2); border-radius: 14px; padding: 1.5rem; max-width: 420px; width: calc(100% - 32px); max-height: 88vh; overflow-y: auto; box-sizing: border-box; }
   .modal-box h3 { font-size: 1.1rem; margin-bottom: 1rem; }
   .modal-box label { display: block; font-size: 0.78rem; color: var(--muted); margin: 0.6rem 0 0.25rem; font-weight: 600; }
   .modal-box input, .modal-box select, .modal-box textarea {
