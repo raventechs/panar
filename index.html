@@ -24,6 +24,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!-- PanAR v1.1 — 2026-07-02 — P1+P3+P5 ROBUSTEZ -->
 <title>PanAR — Caja registradora</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -58,14 +59,12 @@
     --border: rgba(120,70,40,0.15);
   }
 
-  html { overflow-x: hidden; }
   body {
     background: var(--bg);
     color: var(--crema);
     font-family: 'Poppins', sans-serif;
     min-height: 100vh;
     transition: background 0.3s, color 0.3s;
-    overflow-x: hidden;
   }
 
   /* ── PANTALLA DE CARGA ── */
@@ -114,7 +113,6 @@
     font-size: 0.95rem;
     margin-bottom: 0.8rem;
     font-family: inherit;
-    box-sizing: border-box;
   }
   .login-box input:focus { outline: none; border-color: var(--border-hover); }
   .btn-tomate {
@@ -178,7 +176,7 @@
   }
   .tab-btn.active { color: var(--tomate); border-bottom-color: var(--tomate); }
 
-  main { flex: 1; padding: 1rem; max-width: 1100px; width: 100%; margin: 0 auto; box-sizing: border-box; }
+  main { flex: 1; padding: 1rem; max-width: 1100px; width: 100%; margin: 0 auto; }
   .view { display: none; }
   .view.active { display: block; }
 
@@ -235,7 +233,7 @@
   /* ── MODAL ── */
   .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 200; align-items: center; justify-content: center; padding: 1rem; }
   .modal-overlay.active { display: flex; }
-  .modal-box { background: var(--bg2); border-radius: 14px; padding: 1.5rem; max-width: 420px; width: calc(100% - 32px); max-height: 88vh; overflow-y: auto; box-sizing: border-box; }
+  .modal-box { background: var(--bg2); border-radius: 14px; padding: 1.5rem; max-width: 420px; width: 100%; max-height: 88vh; overflow-y: auto; }
   .modal-box h3 { font-size: 1.1rem; margin-bottom: 1rem; }
   .modal-box label { display: block; font-size: 0.78rem; color: var(--muted); margin: 0.6rem 0 0.25rem; font-weight: 600; }
   .modal-box input, .modal-box select, .modal-box textarea {
@@ -658,8 +656,22 @@
   const auth = firebase.auth();
   const db = firebase.firestore();
 
+  // LOG DE ERRORES — P5 ROBUSTEZ
+  function logError(origen, mensaje, extra) {
+    try {
+      const uid = auth.currentUser ? auth.currentUser.uid : 'anonimo';
+      db.collection('errores').add({
+        app: 'PanAR', origen: origen,
+        mensaje: String(mensaje),
+        extra: extra ? String(extra) : null,
+        uid: uid,
+        ts: firebase.firestore.FieldValue.serverTimestamp()
+      });
+    } catch(_) {}
+  }
+
   const ADMIN_EMAIL = 'rgaraventa@gmail.com';
-  const PIN_RAVENTECHS = '1990';
+  const PIN_RAVENTECHS = '2580';
 
   let productos = [];
   let carrito = [];
@@ -1309,7 +1321,7 @@
       const ref = db.collection('insumos').doc(insumoId);
       batch.update(ref, { stockActual: firebase.firestore.FieldValue.increment(-descuentos[insumoId]) });
     });
-    batch.commit().catch(() => {});
+    batch.commit().catch(e => logError('catch', e));
   }
 
   /* ── REPORTES ── */
@@ -1513,6 +1525,12 @@
       document.getElementById('modalFeatures').classList.remove('active');
     });
   });
+
+  // SERVICE WORKER — P3 ROBUSTEZ
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/panar/sw-panar.js')
+      .catch(e => logError('sw', e));
+  }
 </script>
 </body>
 </html>
