@@ -1,7 +1,7 @@
-// sw-panar.js — Service Worker PanAR v1.1
-// P3 ROBUSTEZ: cachea shell + menú para uso offline (Caja + Menú sin WiFi)
+// sw-panar.js — Service Worker PanAR v1.4
+// P3 ROBUSTEZ: cachea shell para uso offline completo
 
-const CACHE_NAME = 'panar-v1.1';
+const CACHE_NAME = 'panar-v1.4';
 const SHELL = [
   '/panar/',
   '/panar/index.html',
@@ -28,14 +28,14 @@ self.addEventListener('activate', e => {
 self.addEventListener('fetch', e => {
   const url = new URL(e.request.url);
 
-  // Firestore y Auth: siempre red
+  // Firestore y Auth: dejar pasar siempre a la red
   if (url.hostname.includes('firestore.googleapis.com') ||
       url.hostname.includes('identitytoolkit.googleapis.com') ||
       url.hostname.includes('securetoken.googleapis.com')) {
     return;
   }
 
-  // Shell y assets: cache-first con fallback a red
+  // Shell y assets estáticos: cache-first con fallback a red
   e.respondWith(
     caches.match(e.request).then(cached => {
       if (cached) return cached;
