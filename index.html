@@ -348,7 +348,17 @@
     </section>
 
     <section class="view" id="view-configuracion">
-      <div class="config-section">
+<div class="config-section">
+        <h4>💾 Backup de datos</h4>
+        <p style="font-size:0.78rem;color:var(--muted);margin-bottom:10px;">Se genera automáticamente una vez por día. Guardá el archivo en un lugar seguro.</p>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+          <button class="btn-secondary" style="width:auto;padding:9px 14px;font-size:0.82rem;" onclick="generarBackup(false)">📥 Descargar backup</button>
+          <button class="btn-secondary" style="width:auto;padding:9px 14px;font-size:0.82rem;" onclick="document.getElementById('inputRestaurar').click()">📤 Restaurar</button>
+        </div>
+        <input type="file" id="inputRestaurar" accept=".json" style="display:none;" onchange="restaurarBackup(this)">
+        <p style="font-size:0.75rem;color:var(--muted);">Último backup: <span id="ultimoBackupFecha">—</span></p>
+      </div>
+            <div class="config-section">
         <h4>Datos del local</h4>
         <label>Nombre de la panadería</label><input type="text" id="cfgNombre" placeholder="Mi Panadería">
         <label>Horario de atención</label><input type="text" id="cfgHorario" placeholder="Lun a Dom 7:00 - 13:00">
@@ -1364,6 +1374,66 @@
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('/panar/sw-panar.js').catch(e=>logError('sw',e));
   }
+  chequearBackupDiario();
+
+// ══════════ BACKUP ESTÁNDAR PanAR ══════════
+async function generarBackup(silencioso) {
+  var uid = auth.currentUser ? auth.currentUser.uid : null;
+  if (!uid) return;
+  try {
+    var ventasSnap = await db.collection('ventas').get().catch(function(){return {docs:[]};});
+    var productosSnap = await db.collection('productos').get().catch(function(){return {docs:[]};});
+    var insumosSnap = await db.collection('insumos').get().catch(function(){return {docs:[]};});
+    var cierresSnap = await db.collection('cierres').get().catch(function(){return {docs:[]};});
+    var configSnap = await db.collection('configuracion').doc('general').get().catch(function(){return {exists:false};});
+    var fecha = new Date().toISOString().slice(0,10);
+    var backup = {
+      app:'PanAR', version:'1.4', fecha:new Date().toISOString(), uid:uid,
+      ventas: ventasSnap.docs.map(function(d){return Object.assign({_id:d.id},d.data());}),
+      productos: productosSnap.docs.map(function(d){return Object.assign({_id:d.id},d.data());}),
+      insumos: insumosSnap.docs.map(function(d){return Object.assign({_id:d.id},d.data());}),
+      cierres: cierresSnap.docs.map(function(d){return Object.assign({_id:d.id},d.data());}),
+      configuracion: configSnap.exists ? configSnap.data() : {}
+    };
+    var json = JSON.stringify(backup, null, 2);
+    localStorage.setItem('panar-ultimo-backup', fecha);
+    var el = document.getElementById('ultimoBackupFecha'); if (el) el.textContent = fecha;
+    if (!silencioso) {
+      var blob = new Blob([json], {type:'application/json'});
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a'); a.href=url; a.download='panar-backup-'+fecha+'.json'; a.click();
+      URL.revokeObjectURL(url); toast('✅ Backup descargado');
+    }
+  } catch(e) { console.error('Error backup:',e); if(!silencioso) toast('Error al generar backup'); }
+}
+
+async function restaurarBackup(input) {
+  var file = input.files[0]; if (!file) return;
+  if (!auth.currentUser) { toast('Iniciá sesión primero'); return; }
+  if (!confirm('Esto va a REEMPLAZAR todos tus datos con los del backup. ¿Continuar?')) { input.value=''; return; }
+  try {
+    var text = await file.text(); var backup = JSON.parse(text);
+    if (backup.app !== 'PanAR') { toast('El archivo no es un backup de PanAR'); return; }
+    toast('Restaurando datos...');
+    var batch = db.batch(); var count = 0;
+    (backup.ventas||[]).forEach(function(v){var id=v._id;var d=Object.assign({},v);delete d._id;batch.set(db.collection('ventas').doc(id),d);if(++count%400===0){batch.commit();batch=db.batch();}});
+    (backup.productos||[]).forEach(function(v){var id=v._id;var d=Object.assign({},v);delete d._id;batch.set(db.collection('productos').doc(id),d);});
+    (backup.insumos||[]).forEach(function(v){var id=v._id;var d=Object.assign({},v);delete d._id;batch.set(db.collection('insumos').doc(id),d);});
+    (backup.cierres||[]).forEach(function(v){var id=v._id;var d=Object.assign({},v);delete d._id;batch.set(db.collection('cierres').doc(id),d);});
+    if(backup.configuracion&&Object.keys(backup.configuracion).length>0){batch.set(db.collection('configuracion').doc('general'),backup.configuracion,{merge:true});}
+    await batch.commit();
+    toast('✅ Backup restaurado'); input.value='';
+    setTimeout(function(){location.reload();},1500);
+  } catch(e) { toast('Error al restaurar: '+e.message); input.value=''; }
+}
+
+function chequearBackupDiario() {
+  var hoy = new Date().toISOString().slice(0,10);
+  var ultimo = localStorage.getItem('panar-ultimo-backup');
+  var el = document.getElementById('ultimoBackupFecha'); if (el && ultimo) el.textContent = ultimo;
+  if (ultimo !== hoy) { setTimeout(function(){generarBackup(true);},5000); }
+}
+
 </script>
 </body>
 </html>
