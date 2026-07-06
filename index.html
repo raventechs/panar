@@ -628,7 +628,639 @@ window.guardarRavFeatures = guardarRavFeatures;
     messagingSenderId: "984331564649",
     appId: "1:984331564649:web:a58cea3d04fdecccaa14f8"
   };
+  // ══════════════════════════════════════════
+//  PANEL RAVENTECHS ADMIN (modo adminView)
+//  Se inyecta en el menú oculto cuando
+//  la app detecta ?adminView=1&uid=X&tok=T
+// ══════════════════════════════════════════
+var _adminToken = null;
+
+(function() {
+  var params = new URLSearchParams(window.location.search);
+  if (params.get('tok')) _adminToken = params.get('tok');
+})();
+
+var _adminPanelMeta = null; // {projectId, docPath, feats}
+
+function renderAdminRavenPanel(containerId, projectId, docPath, feats) {
+  if (!_adminViewUid) return;
+  _adminPanelMeta = { projectId, docPath, feats };
+
+  var container = document.getElementById(containerId);
+  if (!container) return;
+
+  // Leer datos actuales del cliente via REST
+  var url = 'https://firestore.googleapis.com/v1/projects/' + projectId +
+    '/databases/(default)/documents/' + docPath;
+
+  fetch(url, { headers: { 'Authorization': 'Bearer ' + _adminToken } })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (data.error) {
+        container.innerHTML = '<div style="color:#ef4444;font-size:0.78rem;padding:12px">Error al cargar datos del cliente: ' + data.error.message + '</div>';
+        return;
+      }
+      var fields = data.fields || {};
+      var features = fields.features ? fields.features.mapValue.fields || {} : {};
+      var email = fields.email ? fields.email.stringValue : '—';
+      var nombre = (fields.nombre || fields.nombreLocal || fields.nombreNegocio || {}).stringValue || '—';
+      var whatsapp = fields.whatsapp ? fields.whatsapp.stringValue : '—';
+      var status = fields.status ? fields.status.stringValue : '—';
+      var plan = fields.plan ? fields.plan.stringValue : '—';
+
+      var featsHTML = feats.map(function(k) {
+        var activo = features[k] && features[k].booleanValue === true;
+        return '<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid rgba(255,255,255,.08);font-size:0.8rem">' +
+          '<span>' + k + '</span>' +
+          '<label style="position:relative;width:36px;height:19px;flex-shrink:0">' +
+          '<input type="checkbox" id="rav-feat-' + k + '" ' + (activo ? 'checked' : '') + ' style="opacity:0;width:0;height:0;position:absolute">' +
+          '<span onclick="toggleRavFeat(\'' + k + '\')" style="position:absolute;inset:0;background:' + (activo ? '#f0b84a' : '#374151') + ';border-radius:20px;cursor:pointer;transition:.2s" id="rav-sl-' + k + '">' +
+          '<span style="position:absolute;width:13px;height:13px;left:' + (activo ? '20px' : '3px') + ';top:3px;background:#fff;border-radius:50%;transition:.2s" id="rav-dot-' + k + '"></span></span>' +
+          '</label></div>';
+      }).join('');
+
+      container.innerHTML =
+        '<div style="background:#0d1117;border:1.5px solid #f0b84a;border-radius:12px;padding:14px;margin-top:16px">' +
+        '<div style="font-size:0.72rem;font-weight:700;color:#f0b84a;text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px">🦅 RavenTechs Admin</div>' +
+        '<div style="font-size:0.75rem;color:#9ca3af;margin-bottom:8px;line-height:1.7">' +
+        '<b style="color:#e5e7eb">' + nombre + '</b><br>' +
+        'Email: ' + email + '<br>' +
+        'WhatsApp: ' + whatsapp + '<br>' +
+        'Estado: <span style="color:' + (status==='activo'?'#22c55e':'#f0b84a') + '">' + status + '</span>' +
+        (plan !== '—' ? '<br>Plan: ' + plan : '') +
+        '</div>' +
+        '<div style="margin:10px 0">' + featsHTML + '</div>' +
+        '<button onclick="guardarRavFeatures()" style="width:100%;background:#f0b84a;color:#111;border:none;border-radius:8px;padding:9px;font-weight:700;font-size:0.8rem;cursor:pointer;margin-top:8px">💾 Guardar cambios</button>' +
+        '<button onclick="window.open(\'https://raventechs.github.io/admin/\',\'_blank\')" style="width:100%;background:transparent;border:1.5px solid #374151;color:#9ca3af;border-radius:8px;padding:8px;font-weight:600;font-size:0.78rem;cursor:pointer;margin-top:6px">↗ Abrir consola maestra</button>' +
+        '</div>';
+    })
+    .catch(function(e) {
+      container.innerHTML = '<div style="color:#ef4444;font-size:0.78rem;padding:12px">Sin conexión o token expirado.</div>';
+    });
+}
+
+function toggleRavFeat(key) {
+  var cb = document.getElementById('rav-feat-' + key);
+  var sl = document.getElementById('rav-sl-' + key);
+  var dot = document.getElementById('rav-dot-' + key);
+  if (!cb) return;
+  cb.checked = !cb.checked;
+  if (sl) sl.style.background = cb.checked ? '#f0b84a' : '#374151';
+  if (dot) dot.style.left = cb.checked ? '20px' : '3px';
+}
+window.toggleRavFeat = toggleRavFeat;
+
+function guardarRavFeatures() {
+  if (!_adminPanelMeta || !_adminToken) return;
+  var pm = _adminPanelMeta;
+
+  var fields = {};
+  pm.feats.forEach(function(k) {
+    var cb = document.getElementById('rav-feat-' + k);
+    if (cb) fields['features.' + k] = { booleanValue: cb.checked };
+  });
+
+  var fieldPaths = Object.keys(fields).join('&updateMask.fieldPaths=');
+  var url = 'https://firestore.googleapis.com/v1/projects/' + pm.projectId +
+    '/databases/(default)/documents/' + pm.docPath +
+    '?updateMask.fieldPaths=' + fieldPaths;
+
+  fetch(url, {
+    method: 'PATCH',
+    headers: { 'Authorization': 'Bearer ' + _adminToken, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fields: fields })
+  }).then(function(r) { return r.json(); })
+    .then(function(res) {
+      if (res.error) throw new Error(res.error.message);
+      var btn = document.querySelector('[onclick="guardarRavFeatures()"]');
+      if (btn) { btn.textContent = '✅ Guardado'; setTimeout(function(){ btn.textContent = '💾 Guardar cambios'; }, 2000); }
+    })
+    .catch(function(e) {
+      alert('Error al guardar: ' + e.message);
+    });
+}
+window.guardarRavFeatures = guardarRavFeatures;
+
+
+// ── ADMIN VIEW ──
+var _adminViewUid = null;
+(function() {
+  var params = new URLSearchParams(window.location.search);
+  if (params.get('adminView') === '1' && params.get('uid')) {
+    _adminViewUid = params.get('uid');
+  }
+})();
+function activarAdminViewBanner() {
+  if (!_adminViewUid) return;
+  var b = document.getElementById('adminViewBanner');
+  var s = document.getElementById('adminViewUid');
+  if (b) { b.classList.add('on'); document.body.classList.add('admin-view-active'); }
+  if (s) s.textContent = _adminViewUid;
+}
+function salirAdminView() { window.location.href = window.location.origin + window.location.pathname; }
+window.salirAdminView = salirAdminView;
+
+<script>
+  const firebaseConfig = {
+    apiKey: "AIzaSyBSKWqpPwUsF-jq_GES1fCwiZZACz0Jz_I",
+    authDomain: "pizzar-b48af.firebaseapp.com",
+    projectId: "pizzar-b48af",
+    storageBucket: "pizzar-b48af.firebasestorage.app",
+    messagingSenderId: "688726516053",
+    appId: "1:688726516053:web:2e11e63aec82225e82cfdc"
+  };
   firebase.initializeApp(firebaseConfig);
+  const auth = firebase.auth();
+  const db = firebase.firestore();
+
+  function logError(origen, mensaje, extra) {
+    try { db.collection('errores').add({ app:'PizzAR', origen, mensaje:String(mensaje), extra:extra?String(extra):null, uid:auth.currentUser?auth.currentUser.uid:'anonimo', ts:firebase.firestore.FieldValue.serverTimestamp() }); } catch(_) {}
+  }
+
+  const PIN_RAVENTECHS = '2580';
+  let productos=[], carrito=[], metodoPago='efectivo';
+  let categoriaActiva='Todas', grupoActivo=null;
+  let productoSeleccionado=null, editandoProductoId=null;
+  let featuresActuales={pedidosOnlineHabilitado:false,stockHabilitado:false,empleadosHabilitado:false,gastosHabilitado:false};
+  let rolActual=null, pinCajeroActual='2468', whatsappNumero='';
+  let gastosHoy=[], insumos=[], editandoInsumoId=null;
+  let ventasHistorialActual=[], estaOnline=navigator.onLine;
+
+  /* ════ INDEXEDDB ════ */
+  const IDB_NAME='pizzar-offline', IDB_VER=1;
+  let idb=null;
+
+  function abrirIDB() {
+    return new Promise((resolve,reject) => {
+      const req=indexedDB.open(IDB_NAME,IDB_VER);
+      req.onupgradeneeded=e=>{
+        const d=e.target.result;
+        if(!d.objectStoreNames.contains('ventas_pendientes')) d.createObjectStore('ventas_pendientes',{keyPath:'id',autoIncrement:true});
+        if(!d.objectStoreNames.contains('cierres_pendientes')) d.createObjectStore('cierres_pendientes',{keyPath:'id',autoIncrement:true});
+        if(!d.objectStoreNames.contains('catalogo_cache')) d.createObjectStore('catalogo_cache',{keyPath:'id'});
+      };
+      req.onsuccess=e=>{idb=e.target.result;resolve(idb);};
+      req.onerror=e=>reject(e);
+    });
+  }
+  function idbAdd(store,obj){return new Promise((res,rej)=>{const req=idb.transaction(store,'readwrite').objectStore(store).add(obj);req.onsuccess=()=>res(req.result);req.onerror=e=>rej(e);});}
+  function idbGetAll(store){return new Promise((res,rej)=>{const req=idb.transaction(store,'readonly').objectStore(store).getAll();req.onsuccess=()=>res(req.result);req.onerror=e=>rej(e);});}
+  function idbDelete(store,key){return new Promise((res,rej)=>{const req=idb.transaction(store,'readwrite').objectStore(store).delete(key);req.onsuccess=()=>res();req.onerror=e=>rej(e);});}
+  function idbCacheCatalogo(lista){const tx=idb.transaction('catalogo_cache','readwrite');const st=tx.objectStore('catalogo_cache');st.clear();lista.forEach(p=>st.put(p));}
+  function idbGetCatalogo(){return new Promise((res,rej)=>{const req=idb.transaction('catalogo_cache','readonly').objectStore('catalogo_cache').getAll();req.onsuccess=()=>res(req.result);req.onerror=e=>rej(e);});}
+
+  /* ════ ONLINE/OFFLINE ════ */
+  function actualizarEstadoConexion(online){
+    estaOnline=online;
+    document.getElementById('offlineBanner').classList.toggle('visible',!online);
+    if(online) sincronizarPendientes();
+  }
+  window.addEventListener('online',()=>actualizarEstadoConexion(true));
+  window.addEventListener('offline',()=>actualizarEstadoConexion(false));
+
+  async function actualizarBadge(){
+    if(!idb) return;
+    const v=await idbGetAll('ventas_pendientes');
+    const c=await idbGetAll('cierres_pendientes');
+    const total=v.length+c.length;
+    document.getElementById('pendientesCount').textContent=total;
+    document.getElementById('pendientesBadgeBox').style.display=total>0?'':'none';
+  }
+
+  async function sincronizarPendientes(){
+    if(!idb||!estaOnline) return;
+    try{
+      const ventas=await idbGetAll('ventas_pendientes');
+      for(const v of ventas){const{id,...data}=v;await db.collection('ventas').add({...data,ts:firebase.firestore.FieldValue.serverTimestamp()});await idbDelete('ventas_pendientes',id);}
+      const cierres=await idbGetAll('cierres_pendientes');
+      for(const c of cierres){const{id,...data}=c;await db.collection('cierres').add({...data,ts:firebase.firestore.FieldValue.serverTimestamp()});await idbDelete('cierres_pendientes',id);}
+      await actualizarBadge();
+      if(ventas.length+cierres.length>0) toast(`✅ ${ventas.length+cierres.length} registros sincronizados`,'ok');
+    }catch(e){logError('sync',e.message);}
+  }
+
+  function toast(msg,tipo){const box=document.getElementById('toastBox');const t=document.createElement('div');t.className='toast'+(tipo==='ok'?' ok':tipo==='warn'?' warn':'');t.textContent=msg;box.appendChild(t);setTimeout(()=>t.remove(),3500);}
+
+  function aplicarRestriccionesPorRol(){
+    document.querySelectorAll('.tab-btn[data-view="reportes"],.tab-btn[data-view="historial"],.tab-btn[data-view="configuracion"]').forEach(t=>t.style.display=rolActual==='cajero'?'none':'');
+    if(rolActual==='cajero'){document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));document.querySelector('.tab-btn[data-view="caja"]').classList.add('active');document.getElementById('view-caja').classList.add('active');}
+  }
+
+  auth.onAuthStateChanged(async user=>{
+    document.getElementById('loadingScreen').classList.add('hide');
+    if(user){
+      if(_adminViewUid && user.email === 'rgaraventa@gmail.com') { activarAdminViewBanner(); Object.defineProperty(user,'uid',{get:()=>_adminViewUid}); }
+      await abrirIDB();
+      rolActual=user.isAnonymous?'cajero':'dueño';
+      document.getElementById('loginScreen').classList.remove('active');
+      document.getElementById('app').classList.add('active');
+      cargarProductos();cargarInsumos();cargarConfiguracion();cargarGastosHoy();
+      if(rolActual==='dueño') escucharVentasHoy();
+      aplicarRestriccionesPorRol();
+      actualizarEstadoConexion(navigator.onLine);
+      await actualizarBadge();
+    }else{
+      rolActual=null;
+      document.getElementById('app').classList.remove('active');
+      document.getElementById('loginScreen').classList.add('active');
+    }
+  });
+
+  document.getElementById('loginBtn').addEventListener('click',()=>{auth.signInWithEmailAndPassword(document.getElementById('loginEmail').value.trim(),document.getElementById('loginPass').value).catch(()=>{document.getElementById('loginError').textContent='Email o contraseña incorrectos';});});
+  document.getElementById('logoutBtn').addEventListener('click',()=>auth.signOut());
+  document.getElementById('loginGoogleBtn').addEventListener('click',()=>{auth.signInWithPopup(new firebase.auth.GoogleAuthProvider()).catch(()=>{document.getElementById('loginError').textContent='No se pudo iniciar sesión con Google';});});
+  document.getElementById('loginCajeroBtn').addEventListener('click',()=>{db.collection('configuracion').doc('general').get().then(doc=>{pinCajeroActual=(doc.exists&&doc.data().pinCajero)?doc.data().pinCajero:'2468';document.getElementById('pinCajeroInput').value='';document.getElementById('pinCajeroError').textContent='';document.getElementById('modalPinCajero').classList.add('active');setTimeout(()=>document.getElementById('pinCajeroInput').focus(),50);});});
+  document.getElementById('pinCajeroCancelBtn').addEventListener('click',()=>document.getElementById('modalPinCajero').classList.remove('active'));
+  document.getElementById('pinCajeroConfirmBtn').addEventListener('click',()=>{if(document.getElementById('pinCajeroInput').value===pinCajeroActual){document.getElementById('modalPinCajero').classList.remove('active');auth.signInAnonymously().catch(()=>{document.getElementById('pinCajeroError').textContent='No se pudo ingresar';});}else{document.getElementById('pinCajeroError').textContent='PIN incorrecto';}});
+  document.getElementById('pinCajeroInput').addEventListener('keydown',e=>{if(e.key==='Enter')document.getElementById('pinCajeroConfirmBtn').click();});
+  document.getElementById('darkToggleBtn').addEventListener('click',()=>{document.body.classList.toggle('light');document.getElementById('darkToggleBtn').textContent=document.body.classList.contains('light')?'☀️':'🌙';});
+
+  document.querySelectorAll('.tab-btn').forEach(btn=>{btn.addEventListener('click',()=>{document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));btn.classList.add('active');document.getElementById('view-'+btn.dataset.view).classList.add('active');if(btn.dataset.view==='menu')renderProductosLista();if(btn.dataset.view==='stock')renderInsumosLista();if(btn.dataset.view==='reportes')escucharVentasHoy();if(btn.dataset.view==='historial')buscarHistorial('hoy');});});
+
+  /* ════ PRODUCTOS ════ */
+  function cargarProductos(){
+    if(!estaOnline){idbGetCatalogo().then(prods=>{if(prods.length>0){productos=prods;renderCatFilters();renderProductosGrid();renderProductosLista();}});return;}
+    db.collection('productos').onSnapshot(snap=>{
+      productos=snap.docs.map(d=>({id:d.id,...d.data()}));
+      if(!productos.length) precargarMenuEjemplo();
+      if(idb) idbCacheCatalogo(productos);
+      renderCatFilters();renderProductosGrid();renderProductosLista();
+    });
+  }
+
+  function precargarMenuEjemplo(){
+    const pizza=(n,e,ch,me,gr)=>({nombre:n,categoria:'Pizzas',emoji:e,precios:{'Chica':ch,'Mediana':me,'Grande':gr},activo:true});
+    const emp=(n,u)=>({nombre:n,categoria:'Empanadas',emoji:'🥟',precios:{'Unidad':u,'Media docena':Math.round(u*5.7),'Docena':Math.round(u*10.8)},activo:true});
+    const min=(n,e,p)=>({nombre:n,categoria:'Minutas',emoji:e,precios:{'Único':p},activo:true});
+    const beb=(n,e,cat,t)=>({nombre:n,categoria:cat,emoji:e,precios:t,activo:true});
+    const simp=(n,e,cat,p)=>({nombre:n,categoria:cat,emoji:e,precios:{'Único':p},activo:true});
+    [pizza('Muzzarella','🍕',4500,6500,8500),pizza('Napolitana','🍕',5000,7000,9000),pizza('Fugazzeta','🍕',5200,7300,9300),pizza('Jamón y morrones','🍕',5300,7400,9400),pizza('Especial','🍕',5800,7900,9900),pizza('Calabresa','🍕',5400,7500,9500),pizza('Cuatro quesos','🍕',5600,7700,9700),pizza('Rúcula y jamón crudo','🍕',5900,8000,10000),pizza('Anchoa','🍕',5300,7400,9400),pizza('Vegetariana','🥦',5200,7200,9200),
+    emp('Carne suave',900),emp('Carne picante',900),emp('Pollo',850),emp('Jamón y queso',850),emp('Humita',800),emp('Caprese',850),emp('Verdura',800),emp('Roquefort',950),emp('Cebolla y queso',850),emp('Atún',900),
+    min('Hamburguesa simple','🍔',3200),min('Hamburguesa completa','🍔',4200),min('Milanesa de carne','🍖',5500),min('Milanesa napolitana','🍖',6200),min('Sándwich de milanesa','🥪',4500),min('Lomito completo','🥪',6500),min('Choripán','🌭',3000),min('Papas fritas chicas','🍟',2200),min('Papas fritas grandes','🍟',3500),min('Provoleta','🧀',4000),
+    beb('Coca-Cola','🥤','Gaseosas',{'500ml':1500,'1.25L':2200,'1.5L':2500,'2.25L':3200}),beb('Sprite','🥤','Gaseosas',{'500ml':1400,'1.5L':2400}),beb('Agua sin gas','💧','Aguas',{'500ml':1000,'1.5L':1700}),beb('Quilmes','🍺','Cervezas',{'Lata 354ml':1800,'Litro':2900}),
+    simp('Pan de ajo chico','🍞','Extras',1800),simp('Pan de ajo grande','🍞','Extras',2800),simp('Flan casero','🍮','Postres',2000),simp('Helado 1/4kg','🍨','Postres',2500),
+    ].forEach(p=>db.collection('productos').add(p));
+  }
+
+  const GRUPOS_MAP={'Pizzas':'Pizzas','Empanadas':'Empanadas','Minutas':'Minutas','Gaseosas':'Bebidas','Cervezas':'Bebidas','Aguas':'Bebidas','Extras':'Extras','Postres':'Postres'};
+  function grupoDe(cat){return GRUPOS_MAP[cat]||cat;}
+
+  function renderCatFilters(){
+    const grupos=[...new Set(productos.map(p=>grupoDe(p.categoria)))];
+    if(!grupoActivo||!grupos.includes(grupoActivo)) grupoActivo=grupos[0]||null;
+    document.getElementById('grupoFilters').innerHTML=grupos.map(g=>`<button class="grupo-chip ${g===grupoActivo?'active':''}" data-grupo="${g}">${g}</button>`).join('');
+    document.querySelectorAll('.grupo-chip').forEach(chip=>{chip.addEventListener('click',()=>{grupoActivo=chip.dataset.grupo;categoriaActiva='Todas';renderCatFilters();renderProductosGrid();});});
+    const cats=[...new Set(productos.filter(p=>grupoDe(p.categoria)===grupoActivo).map(p=>p.categoria))];
+    const catCont=document.getElementById('catFilters');
+    if(cats.length<=1){catCont.innerHTML='';return;}
+    catCont.innerHTML=['Todas',...cats].map(c=>`<button class="cat-chip ${c===categoriaActiva?'active':''}" data-cat="${c}">${c}</button>`).join('');
+    document.querySelectorAll('.cat-chip').forEach(chip=>{chip.addEventListener('click',()=>{categoriaActiva=chip.dataset.cat;renderCatFilters();renderProductosGrid();});});
+  }
+
+  function renderProductosGrid(){
+    let lista=productos.filter(p=>grupoDe(p.categoria)===grupoActivo);
+    if(categoriaActiva!=='Todas') lista=lista.filter(p=>p.categoria===categoriaActiva);
+    document.getElementById('productosGrid').innerHTML=lista.map(p=>`<div class="producto-btn ${p.activo?'':'inactivo'}" data-id="${p.id}"><div class="producto-emoji">${p.emoji||'🍕'}</div><div class="producto-nombre">${p.nombre}</div><div class="producto-precio">$${menorPrecio(p)}</div></div>`).join('');
+    document.querySelectorAll('.producto-btn').forEach(card=>card.addEventListener('click',()=>abrirModalAgregar(card.dataset.id)));
+  }
+
+  function menorPrecio(p){const v=Object.values(p.precios||{}).filter(x=>x>0);return v.length?Math.min(...v):0;}
+
+  function abrirModalAgregar(id){
+    productoSeleccionado=productos.find(p=>p.id===id);if(!productoSeleccionado)return;
+    document.getElementById('modalAgregarNombre').textContent=productoSeleccionado.nombre;
+    document.getElementById('modalAgregarTamano').innerHTML=Object.entries(productoSeleccionado.precios||{}).filter(([,v])=>v>0).map(([t,v])=>`<option value="${t}">${t} — $${v}</option>`).join('');
+    document.getElementById('modalAgregarCantidad').value=1;
+    document.getElementById('modalAgregar').classList.add('active');
+  }
+  document.getElementById('modalAgregarCancel').addEventListener('click',()=>document.getElementById('modalAgregar').classList.remove('active'));
+  document.getElementById('modalAgregarConfirm').addEventListener('click',()=>{
+    const tamano=document.getElementById('modalAgregarTamano').value;
+    const cantidad=parseInt(document.getElementById('modalAgregarCantidad').value)||1;
+    carrito.push({productoId:productoSeleccionado.id,nombre:productoSeleccionado.nombre,categoria:productoSeleccionado.categoria,tamano,precio:productoSeleccionado.precios[tamano],cantidad});
+    renderCarrito();document.getElementById('modalAgregar').classList.remove('active');
+  });
+
+  function renderCarrito(){
+    const cont=document.getElementById('carritoItems');
+    if(!carrito.length){cont.innerHTML='<div class="empty-cart">Tocá un producto para agregarlo</div>';}
+    else{
+      cont.innerHTML=carrito.map((item,i)=>`<div class="carrito-item"><div class="carrito-item-info">${item.nombre} <span style="color:var(--muted)">(${item.tamano})</span></div><div class="carrito-item-qty"><button class="qty-btn" data-i="${i}" data-d="-1">−</button><span>${item.cantidad}</span><button class="qty-btn" data-i="${i}" data-d="1">+</button></div><div>$${item.precio*item.cantidad}</div></div>`).join('');
+      document.querySelectorAll('.qty-btn').forEach(b=>b.addEventListener('click',()=>{const i=parseInt(b.dataset.i);carrito[i].cantidad+=parseInt(b.dataset.d);if(carrito[i].cantidad<=0)carrito.splice(i,1);renderCarrito();}));
+    }
+    document.getElementById('carritoTotal').textContent='$'+carrito.reduce((s,it)=>s+it.precio*it.cantidad,0);
+  }
+
+  document.querySelectorAll('.pago-chip').forEach(chip=>{chip.addEventListener('click',()=>{document.querySelectorAll('.pago-chip').forEach(c=>c.classList.remove('active'));chip.classList.add('active');metodoPago=chip.dataset.pago;});});
+
+  document.getElementById('cobrarBtn').addEventListener('click',async()=>{
+    if(!carrito.length){toast('El carrito está vacío');return;}
+    const total=carrito.reduce((s,it)=>s+it.precio*it.cantidad,0);
+    const itemsVendidos=carrito.slice();
+    const ventaData={items:carrito,total,metodoPago,fecha:new Date().toISOString(),fechaDia:new Date().toISOString().slice(0,10)};
+    if(estaOnline){
+      try{await db.collection('ventas').add({...ventaData,ts:firebase.firestore.FieldValue.serverTimestamp()});descontarStockPorVenta(itemsVendidos);toast('Venta registrada — $'+total);}
+      catch(e){logError('cobrar',e.message);toast('Error al guardar. Reintentá.');return;}
+    }else{
+      await idbAdd('ventas_pendientes',ventaData);await actualizarBadge();toast('📴 Venta guardada offline — se sincronizará al reconectar');
+    }
+    carrito=[];renderCarrito();
+  });
+
+  /* ════ MENU ADMIN ════ */
+  function renderProductosLista(){
+    document.getElementById('productosLista').innerHTML=productos.map(p=>`<div class="producto-row"><div><div class="producto-row-name">${p.emoji||'🍕'} ${p.nombre}</div><div class="producto-row-meta">${p.categoria} — ${p.activo?'Activo':'Inactivo'}</div></div><div class="row-actions"><button data-edit="${p.id}">✏️</button><button data-del="${p.id}">🗑️</button></div></div>`).join('');
+    document.querySelectorAll('[data-edit]').forEach(b=>b.addEventListener('click',()=>abrirModalProducto(b.dataset.edit)));
+    document.querySelectorAll('[data-del]').forEach(b=>b.addEventListener('click',()=>{if(confirm('¿Eliminar este producto?'))db.collection('productos').doc(b.dataset.del).delete().then(()=>toast('Producto eliminado'));}));
+  }
+
+  document.getElementById('nuevoProductoBtn').addEventListener('click',()=>abrirModalProducto(null));
+  let tamanosEditando=[];
+
+  function renderTamanosLista(tamanos){
+    const cont=document.getElementById('prodTamanosLista');
+    const aviso=insumos.length===0?'<p style="font-size:0.72rem;color:var(--muted);margin-bottom:6px;">⚠️ No hay insumos — podés guardar precios igual.</p>':'';
+    cont.innerHTML=aviso+tamanos.map((t,i)=>filaTamanoHTML(t,i)).join('');
+    cont.querySelectorAll('.del-tamano-block').forEach(b=>b.addEventListener('click',()=>{sincronizarTamanosDesdeInputs();tamanosEditando.splice(parseInt(b.dataset.i),1);renderTamanosLista(tamanosEditando);}));
+    cont.querySelectorAll('.del-receta-item').forEach(b=>b.addEventListener('click',()=>{sincronizarTamanosDesdeInputs();const ti=parseInt(b.dataset.ti),ri=parseInt(b.dataset.ri);tamanosEditando[ti].receta.splice(ri,1);renderTamanosLista(tamanosEditando);}));
+    cont.querySelectorAll('.tamano-add-insumo').forEach(b=>b.addEventListener('click',()=>{if(!insumos.length){toast('Cargá insumos primero en Stock');return;}sincronizarTamanosDesdeInputs();const ti=parseInt(b.dataset.ti);tamanosEditando[ti].receta=tamanosEditando[ti].receta||[];tamanosEditando[ti].receta.push({insumoId:insumos[0].id,cantidad:0});renderTamanosLista(tamanosEditando);}));
+  }
+
+  function filaTamanoHTML(t,i){
+    const receta=t.receta||[];
+    const rHTML=receta.map((r,ri)=>`<div class="size-price-row"><select class="receta-insumo" data-ti="${i}" data-ri="${ri}" style="flex:1.4;">${insumos.map(ins=>`<option value="${ins.id}" ${ins.id===r.insumoId?'selected':''}>${ins.nombre} (${ins.unidad})</option>`).join('')}</select><input type="number" class="receta-cantidad" data-ti="${i}" data-ri="${ri}" value="${r.cantidad}" step="0.01" placeholder="Cant."><button type="button" class="del-tamano del-receta-item" data-ti="${i}" data-ri="${ri}">✕</button></div>`).join('');
+    return `<div class="tamano-block" data-i="${i}"><div class="size-price-row"><input type="text" class="tamano-nombre" value="${t.nombre}" placeholder="ej: Mediana"><input type="number" class="tamano-precio" value="${t.precio}" placeholder="$"><button type="button" class="del-tamano del-tamano-block" data-i="${i}">✕</button></div>${insumos.length>0?`<div class="tamano-receta-list">${rHTML}</div><button type="button" class="btn-secondary tamano-add-insumo" data-ti="${i}">+ insumo para "${t.nombre||'este tamaño'}"</button>`:''}</div>`;
+  }
+
+  document.getElementById('prodAgregarTamanoBtn').addEventListener('click',()=>{sincronizarTamanosDesdeInputs();tamanosEditando.push({nombre:'',precio:0,receta:[]});renderTamanosLista(tamanosEditando);});
+
+  function sincronizarTamanosDesdeInputs(){
+    tamanosEditando=Array.from(document.querySelectorAll('#prodTamanosLista .tamano-block')).map(bloque=>{
+      const recetaFilas=bloque.querySelectorAll('.tamano-receta-list .size-price-row');
+      const receta=Array.from(recetaFilas).map(f=>({insumoId:f.querySelector('.receta-insumo').value,cantidad:parseFloat(f.querySelector('.receta-cantidad').value)||0}));
+      return{nombre:bloque.querySelector('.tamano-nombre').value.trim(),precio:parseFloat(bloque.querySelector('.tamano-precio').value)||0,receta};
+    });
+  }
+
+  function abrirModalProducto(id){
+    editandoProductoId=id;
+    const p=id?productos.find(x=>x.id===id):null;
+    document.getElementById('modalProductoTitulo').textContent=id?'Editar producto':'Nuevo producto';
+    document.getElementById('prodNombre').value=p?p.nombre:'';
+    document.getElementById('prodCategoria').value=p?p.categoria:'Pizzas';
+    document.getElementById('prodEmoji').value=p?(p.emoji||'🍕'):'🍕';
+    tamanosEditando=p?Object.entries(p.precios||{}).map(([nombre,precio])=>({nombre,precio,receta:(p.recetaPorTamano&&p.recetaPorTamano[nombre])?JSON.parse(JSON.stringify(p.recetaPorTamano[nombre])):[]})):[{nombre:'Único',precio:0,receta:[]}];
+    renderTamanosLista(tamanosEditando);
+    document.getElementById('prodActivo').checked=p?p.activo:true;
+    document.getElementById('modalProducto').classList.add('active');
+  }
+  document.getElementById('modalProductoCancel').addEventListener('click',()=>document.getElementById('modalProducto').classList.remove('active'));
+  document.getElementById('modalProductoConfirm').addEventListener('click',()=>{
+    sincronizarTamanosDesdeInputs();
+    const precios={},recetaPorTamano={};
+    tamanosEditando.forEach(t=>{if(!t.nombre)return;precios[t.nombre]=t.precio;const rl=(t.receta||[]).filter(r=>r.insumoId&&r.cantidad>0);if(rl.length)recetaPorTamano[t.nombre]=rl;});
+    const data={nombre:document.getElementById('prodNombre').value.trim(),categoria:document.getElementById('prodCategoria').value,emoji:document.getElementById('prodEmoji').value.trim(),precios,recetaPorTamano,receta:firebase.firestore.FieldValue.delete(),activo:document.getElementById('prodActivo').checked};
+    if(!data.nombre){toast('Falta el nombre');return;}if(!Object.keys(precios).length){toast('Agregá al menos un tamaño');return;}
+    const ref=editandoProductoId?db.collection('productos').doc(editandoProductoId):db.collection('productos').doc();
+    ref.set(data,{merge:true}).then(()=>{toast('Producto guardado');document.getElementById('modalProducto').classList.remove('active');});
+  });
+
+  document.getElementById('limpiarDuplicadosBtn').addEventListener('click',()=>{
+    const grupos={};productos.forEach(p=>{const k=(p.nombre||'').trim().toLowerCase()+'|'+(p.categoria||'').trim().toLowerCase();if(!grupos[k])grupos[k]=[];grupos[k].push(p);});
+    const aBorrar=[];let gCount=0;const cr=p=>p.recetaPorTamano?Object.values(p.recetaPorTamano).reduce((s,r)=>s+r.length,0):(p.receta?.length||0);
+    Object.values(grupos).forEach(lista=>{if(lista.length<=1)return;gCount++;lista.sort((a,b)=>cr(b)-cr(a));lista.slice(1).forEach(p=>aBorrar.push(p.id));});
+    if(!aBorrar.length){toast('No se encontraron duplicados');return;}
+    if(!confirm(`Se eliminan ${aBorrar.length} duplicados (${gCount} grupos). ¿Continuar?`))return;
+    const batch=db.batch();aBorrar.forEach(id=>batch.delete(db.collection('productos').doc(id)));batch.commit().then(()=>toast(`${aBorrar.length} duplicados eliminados`));
+  });
+
+  document.getElementById('restablecerCatalogoBtn').addEventListener('click',()=>{
+    if(!confirm('Esto va a BORRAR todos los productos actuales. ¿Seguro?'))return;
+    if(!confirm('Confirmá: se borran todos y se carga el catálogo de ejemplo. ¿Continuar?'))return;
+    db.collection('productos').get().then(snap=>{const b=db.batch();snap.docs.forEach(doc=>b.delete(doc.ref));return b.commit();}).then(()=>{precargarMenuEjemplo();toast('Catálogo restablecido');});
+  });
+
+  /* ════ STOCK ════ */
+  function cargarInsumos(){db.collection('insumos').onSnapshot(snap=>{insumos=snap.docs.map(d=>({id:d.id,...d.data()}));renderInsumosLista();});}
+
+  function listaInsumosBasicos(){const i=(n,u,sa,sm)=>({nombre:n,unidad:u,stockActual:sa,stockMinimo:sm});return[i('Harina','kg',25,5),i('Mozzarella','kg',15,3),i('Salsa de tomate','kg',10,2),i('Aceite','L',8,2),i('Levadura','kg',1,0.2),i('Sal','kg',5,1),i('Jamón','kg',5,1),i('Morrones','kg',3,0.5),i('Aceitunas','kg',2,0.5),i('Huevo','unidad',60,12),i('Carne picada','kg',10,2),i('Pollo','kg',8,2),i('Coca-Cola 500ml','unidad',24,6),i('Coca-Cola 1.5L','unidad',12,3),i('Agua sin gas 500ml','unidad',24,6),i('Cerveza Quilmes lata','unidad',24,6)];}
+
+  document.getElementById('cargarBasicosBtn').addEventListener('click',()=>{const ex=new Set(insumos.map(i=>i.nombre.trim().toLowerCase()));const falt=listaInsumosBasicos().filter(b=>!ex.has(b.nombre.trim().toLowerCase()));if(!falt.length){toast('Ya tenés todos los insumos básicos');return;}falt.forEach(i=>db.collection('insumos').add(i));toast(`Se agregaron ${falt.length} insumos básicos`);});
+
+  function renderInsumosLista(){
+    const dl=document.getElementById('insumosDatalist');if(dl)dl.innerHTML=insumos.map(i=>`<option value="${i.nombre}"></option>`).join('');
+    const cont=document.getElementById('insumosLista');if(!cont)return;
+    if(!insumos.length){cont.innerHTML='<p style="color:var(--muted);font-size:0.85rem;">Todavía no cargaste insumos.</p>';return;}
+    cont.innerHTML=insumos.map(ins=>{const bajo=ins.stockActual<=ins.stockMinimo;return`<div class="producto-row"><div><div class="producto-row-name">${bajo?'⚠️ ':''}${ins.nombre}</div><div class="producto-row-meta" style="${bajo?'color:var(--tomate);font-weight:600;':''}">Stock: ${ins.stockActual} ${ins.unidad} (mínimo ${ins.stockMinimo})</div></div><div class="row-actions"><button data-editins="${ins.id}">✏️</button><button data-delins="${ins.id}">🗑️</button></div></div>`;}).join('');
+    cont.querySelectorAll('[data-editins]').forEach(b=>b.addEventListener('click',()=>abrirModalInsumo(b.dataset.editins)));
+    cont.querySelectorAll('[data-delins]').forEach(b=>b.addEventListener('click',()=>{if(confirm('¿Eliminar este insumo?'))db.collection('insumos').doc(b.dataset.delins).delete().then(()=>toast('Insumo eliminado'));}));
+  }
+
+  document.getElementById('nuevoInsumoBtn').addEventListener('click',()=>abrirModalInsumo(null));
+  function abrirModalInsumo(id){editandoInsumoId=id;const ins=id?insumos.find(x=>x.id===id):null;document.getElementById('modalInsumoTitulo').textContent=id?'Editar insumo':'Nuevo insumo';document.getElementById('insNombre').value=ins?ins.nombre:'';document.getElementById('insUnidad').value=ins?ins.unidad:'kg';document.getElementById('insStockActual').value=ins?ins.stockActual:0;document.getElementById('insStockMinimo').value=ins?ins.stockMinimo:0;document.getElementById('modalInsumo').classList.add('active');}
+  document.getElementById('modalInsumoCancel').addEventListener('click',()=>document.getElementById('modalInsumo').classList.remove('active'));
+  document.getElementById('modalInsumoConfirm').addEventListener('click',()=>{const data={nombre:document.getElementById('insNombre').value.trim(),unidad:document.getElementById('insUnidad').value,stockActual:parseFloat(document.getElementById('insStockActual').value)||0,stockMinimo:parseFloat(document.getElementById('insStockMinimo').value)||0};if(!data.nombre){toast('Falta el nombre');return;}const ref=editandoInsumoId?db.collection('insumos').doc(editandoInsumoId):db.collection('insumos').doc();ref.set(data,{merge:true}).then(()=>{toast('Insumo guardado');document.getElementById('modalInsumo').classList.remove('active');});});
+
+  function descontarStockPorVenta(items){
+    if(!insumos.length)return;const desc={};
+    items.forEach(item=>{const prod=productos.find(p=>p.id===item.productoId);if(!prod)return;let receta=(prod.recetaPorTamano&&prod.recetaPorTamano[item.tamano])||[];if(!receta.length&&prod.receta)receta=prod.receta;if(!receta.length)return;receta.forEach(r=>{desc[r.insumoId]=(desc[r.insumoId]||0)+(r.cantidad*item.cantidad);});});
+    const ids=Object.keys(desc);if(!ids.length)return;
+    const batch=db.batch();ids.forEach(id=>batch.update(db.collection('insumos').doc(id),{stockActual:firebase.firestore.FieldValue.increment(-desc[id])}));
+    batch.commit().catch(e=>logError('descuentoStock',e));
+  }
+
+  /* ════ REPORTES ════ */
+  function escucharVentasHoy(){
+    const hoy=new Date().toISOString().slice(0,10);
+    db.collection('ventas').where('fechaDia','==',hoy).onSnapshot(snap=>{
+      const ventas=snap.docs.map(d=>d.data());
+      document.getElementById('repPedidosDia').textContent=ventas.length;
+      document.getElementById('repIngresosDia').textContent='$'+ventas.reduce((s,v)=>s+(v.total||0),0);
+      const cp={},cg={};ventas.forEach(v=>{(v.items||[]).forEach(it=>{cp[it.nombre]=(cp[it.nombre]||0)+it.cantidad;});cg[v.metodoPago]=(cg[v.metodoPago]||0)+1;});
+      const top=Object.entries(cp).sort((a,b)=>b[1]-a[1]).slice(0,5);
+      document.getElementById('topProductos').innerHTML=top.length?top.map(([n,c])=>`<div class="top-row"><span>${n}</span><span>${c}</span></div>`).join(''):'<div class="top-row"><span>Sin ventas hoy</span></div>';
+      document.getElementById('porPago').innerHTML=Object.entries(cg).length?Object.entries(cg).map(([n,c])=>`<div class="top-row"><span>${n}</span><span>${c}</span></div>`).join(''):'<div class="top-row"><span>Sin ventas hoy</span></div>';
+    });
+  }
+
+  /* ════ HISTORIAL + CSV ════ */
+  function fechaISO(d){return d.toISOString().slice(0,10);}
+
+  async function buscarHistorial(preset){
+    let desde,hasta;const hoy=new Date();
+    if(preset==='hoy'){desde=hasta=fechaISO(hoy);}
+    else if(preset==='semana'){const i=new Date(hoy);i.setDate(hoy.getDate()-6);desde=fechaISO(i);hasta=fechaISO(hoy);}
+    else{desde=document.getElementById('historialDesde').value;hasta=document.getElementById('historialHasta').value;if(!desde||!hasta){toast('Elegí ambas fechas');return;}}
+    let ventas=[];
+    if(estaOnline){const snap=await db.collection('ventas').where('fechaDia','>=',desde).where('fechaDia','<=',hasta).get();ventas=snap.docs.map(d=>d.data()).sort((a,b)=>(b.fechaDia||'').localeCompare(a.fechaDia||''));}
+    else{const pend=await idbGetAll('ventas_pendientes');ventas=pend.filter(v=>v.fechaDia>=desde&&v.fechaDia<=hasta).sort((a,b)=>(b.fechaDia||'').localeCompare(a.fechaDia||''));toast('📴 Mostrando ventas offline del período');}
+    ventasHistorialActual=ventas;
+    document.getElementById('histCantVentas').textContent=ventas.length;
+    document.getElementById('histIngresos').textContent='$'+ventas.reduce((s,v)=>s+(v.total||0),0);
+    document.getElementById('historialLista').innerHTML=ventas.length?ventas.map(v=>`<div class="top-row"><span>${v.fechaDia} — ${(v.items||[]).map(it=>it.nombre).join(', ').slice(0,40)}</span><span>$${v.total} (${v.metodoPago})</span></div>`).join(''):'<div class="top-row"><span>Sin ventas en este período</span></div>';
+  }
+
+  document.getElementById('exportCSVBtn').addEventListener('click',async()=>{
+    let ventas=ventasHistorialActual;
+    if(!ventas.length){if(estaOnline){const snap=await db.collection('ventas').where('fechaDia','==',fechaISO(new Date())).get();ventas=snap.docs.map(d=>d.data());}else{ventas=await idbGetAll('ventas_pendientes');}}
+    if(!ventas.length){toast('No hay ventas para exportar');return;}
+    const filas=[['Fecha','Método de pago','Total','Productos']];
+    ventas.forEach(v=>{const prods=(v.items||[]).map(it=>`${it.nombre} (${it.tamano}) x${it.cantidad}`).join(' | ');filas.push([v.fechaDia||'',v.metodoPago||'',v.total||0,prods]);});
+    const csv=filas.map(f=>f.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n');
+    const blob=new Blob(['\uFEFF'+csv],{type:'text/csv;charset=utf-8;'});
+    const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`pizzar-ventas-${fechaISO(new Date())}.csv`;a.click();URL.revokeObjectURL(url);toast('CSV exportado ✓');
+  });
+
+  document.querySelectorAll('#historialPresets .cat-chip').forEach(chip=>{chip.addEventListener('click',()=>{document.querySelectorAll('#historialPresets .cat-chip').forEach(c=>c.classList.remove('active'));chip.classList.add('active');const preset=chip.dataset.preset;document.getElementById('historialRangoCustom').style.display=preset==='rango'?'flex':'none';if(preset!=='rango')buscarHistorial(preset);});});
+  document.getElementById('historialBuscarBtn').addEventListener('click',()=>buscarHistorial('rango'));
+
+  /* ════ CONFIGURACIÓN ════ */
+  function cargarConfiguracion(){
+    db.collection('configuracion').doc('general').get().then(doc=>{
+      const c=doc.exists?doc.data():{};
+      document.getElementById('cfgNombre').value=c.nombre||'';document.getElementById('cfgHorario').value=c.horario||'';
+      document.getElementById('cfgPinCajero').value=c.pinCajero||'2468';document.getElementById('cfgWhatsapp').value=c.whatsapp||'';
+      pinCajeroActual=c.pinCajero||'2468';whatsappNumero=c.whatsapp||'';
+      featuresActuales={...featuresActuales,...(c.features||{})};
+      document.getElementById('cfgWhatsappSection').style.display=rolActual==='dueño'?'':'none';
+      renderPlusStatus();
+    });
+  }
+  document.getElementById('guardarCfgBtn').addEventListener('click',()=>{db.collection('configuracion').doc('general').set({nombre:document.getElementById('cfgNombre').value.trim(),horario:document.getElementById('cfgHorario').value.trim()},{merge:true}).then(()=>toast('Configuración guardada'));});
+  document.getElementById('guardarPinCajeroBtn').addEventListener('click',()=>{const pin=document.getElementById('cfgPinCajero').value.trim();if(!pin||pin.length<4){toast('El PIN debe tener al menos 4 dígitos');return;}db.collection('configuracion').doc('general').set({pinCajero:pin},{merge:true}).then(()=>{pinCajeroActual=pin;toast('PIN actualizado');});});
+  document.getElementById('guardarWhatsappBtn').addEventListener('click',()=>{const num=document.getElementById('cfgWhatsapp').value.trim().replace(/\D/g,'');if(!num||num.length<10){toast('Número inválido');return;}db.collection('configuracion').doc('general').set({whatsapp:num},{merge:true}).then(()=>{whatsappNumero=num;toast('Número guardado');});});
+
+  function renderPlusStatus(){document.querySelectorAll('.plus-status').forEach(el=>{el.textContent=featuresActuales[el.dataset.flag]?'✅':'🔒';});aplicarTabsPlus();}
+  function aplicarTabsPlus(){
+    document.querySelector('.tab-btn[data-view="pedidos"]').style.display=(featuresActuales.pedidosOnlineHabilitado&&rolActual==='dueño')?'':'none';
+    document.querySelector('.tab-btn[data-view="empleados"]').style.display=(featuresActuales.empleadosHabilitado&&rolActual==='dueño')?'':'none';
+    document.querySelector('.tab-btn[data-view="stock"]').style.display=featuresActuales.stockHabilitado?'':'none';
+    const gs=document.getElementById('gastosSection');if(gs)gs.style.display=featuresActuales.gastosHabilitado?'':'none';
+  }
+
+  /* ════ GASTOS ════ */
+  function hoyISO(){return new Date().toISOString().slice(0,10);}
+  function cargarGastosHoy(){db.collection('gastos').where('fechaDia','==',hoyISO()).onSnapshot(snap=>{gastosHoy=snap.docs.map(d=>({id:d.id,...d.data()}));renderGastosLista();},e=>logError('gastos-snap',e));}
+  function renderGastosLista(){const cont=document.getElementById('gastosLista');if(!cont)return;if(!gastosHoy.length){cont.innerHTML='<p style="font-size:0.78rem;color:var(--muted);">Sin gastos registrados hoy.</p>';return;}cont.innerHTML=gastosHoy.map(g=>`<div class="carrito-item" style="margin-bottom:4px;"><div class="carrito-item-info">${g.descripcion}</div><div style="color:var(--tomate);font-weight:700;">-$${g.monto}</div><button style="background:none;border:none;color:var(--muted);cursor:pointer;" data-delgasto="${g.id}">✕</button></div>`).join('');cont.querySelectorAll('[data-delgasto]').forEach(b=>b.addEventListener('click',()=>{db.collection('gastos').doc(b.dataset.delgasto).delete().catch(e=>logError('del-gasto',e));}));}
+  document.getElementById('btnAgregarGasto').addEventListener('click',()=>{document.getElementById('gastoDesc').value='';document.getElementById('gastoMonto').value='';document.getElementById('modalGasto').classList.add('active');setTimeout(()=>document.getElementById('gastoDesc').focus(),50);});
+  document.getElementById('modalGastoCancel').addEventListener('click',()=>document.getElementById('modalGasto').classList.remove('active'));
+  document.getElementById('modalGastoConfirm').addEventListener('click',()=>{const desc=document.getElementById('gastoDesc').value.trim();const monto=parseFloat(document.getElementById('gastoMonto').value)||0;if(!desc){toast('Ingresá una descripción');return;}if(monto<=0){toast('Ingresá un monto mayor a 0');return;}db.collection('gastos').add({descripcion:desc,monto,fechaDia:hoyISO(),ts:firebase.firestore.FieldValue.serverTimestamp()}).then(()=>{toast('Gasto registrado');document.getElementById('modalGasto').classList.remove('active');}).catch(e=>logError('add-gasto',e));});
+
+  /* ════ CIERRE DE CAJA ════ */
+  document.getElementById('btnCerrarCaja').addEventListener('click',async()=>{
+    if(!whatsappNumero){toast('Configurá el número de WhatsApp en Configuración','warn');return;}
+    let ventasHoy=[];
+    if(estaOnline){try{const snap=await db.collection('ventas').where('fechaDia','==',hoyISO()).get();ventasHoy=snap.docs.map(d=>d.data());}catch(e){logError('cierre-ventas',e);}}
+    else{const pend=await idbGetAll('ventas_pendientes');ventasHoy=pend.filter(v=>v.fechaDia===hoyISO());}
+    let totalEfectivo=0,totalDebito=0,totalTransferencia=0,totalPizzas=0,totalEmpanadas=0;
+    ventasHoy.forEach(v=>{const m=v.total||0;if(v.metodoPago==='efectivo')totalEfectivo+=m;else if(v.metodoPago==='debito')totalDebito+=m;else if(v.metodoPago==='transferencia')totalTransferencia+=m;(v.items||[]).forEach(it=>{const prod=productos.find(p=>p.id===it.productoId);if(!prod)return;if(prod.categoria==='Pizzas')totalPizzas+=it.cantidad;if(prod.categoria==='Empanadas'){const tam=(it.tamano||'').toLowerCase();if(tam.includes('docena')&&!tam.includes('media'))totalEmpanadas+=12*it.cantidad;else if(tam.includes('media'))totalEmpanadas+=6*it.cantidad;else totalEmpanadas+=it.cantidad;}});});
+    const totalGastos=featuresActuales.gastosHabilitado?gastosHoy.reduce((s,g)=>s+(g.monto||0),0):0;
+    const docenas=Math.floor(totalEmpanadas/12),sueltas=totalEmpanadas%12;
+    let resumen=`🍕 *Cierre de caja — ${hoyISO()}*\n\n*Ingresos:*\n  💵 Efectivo: $${totalEfectivo.toLocaleString('es-AR')}\n  💳 Débito: $${totalDebito.toLocaleString('es-AR')}\n  📲 Transferencia: $${totalTransferencia.toLocaleString('es-AR')}\n\n*Productos:*\n  🍕 Pizzas: ${totalPizzas}\n  🥟 Empanadas: ${docenas} docena${docenas!==1?'s':''}${sueltas>0?` y ${sueltas} unidad${sueltas!==1?'es':''}`:''}`; 
+    if(featuresActuales.gastosHabilitado)resumen+=`\n\n*Gastos del día:*\n  💸 Total: $${totalGastos.toLocaleString('es-AR')}`;
+    if(!estaOnline)resumen+=`\n\n⚠️ _Cierre generado offline — ventas pendientes de sincronizar_`;
+    resumen+=`\n\n_Enviado desde PizzAR_`;
+    document.getElementById('cierreResumenHTML').textContent=resumen;
+    document.getElementById('modalCierre').classList.add('active');
+    const modal=document.getElementById('modalCierre');
+    modal.dataset.resumen=resumen;modal.dataset.totalEfectivo=totalEfectivo;modal.dataset.totalDebito=totalDebito;modal.dataset.totalTransferencia=totalTransferencia;modal.dataset.totalPizzas=totalPizzas;modal.dataset.totalEmpanadas=totalEmpanadas;modal.dataset.totalGastos=totalGastos;
+  });
+
+  document.getElementById('modalCierreCancel').addEventListener('click',()=>document.getElementById('modalCierre').classList.remove('active'));
+  document.getElementById('modalCierreConfirm').addEventListener('click',async()=>{
+    const modal=document.getElementById('modalCierre');
+    const resumen=modal.dataset.resumen;
+    const cierreData={fechaDia:hoyISO(),fechaISO:new Date().toISOString(),totalEfectivo:parseFloat(modal.dataset.totalEfectivo)||0,totalDebito:parseFloat(modal.dataset.totalDebito)||0,totalTransferencia:parseFloat(modal.dataset.totalTransferencia)||0,totalPizzas:parseInt(modal.dataset.totalPizzas)||0,totalEmpanadas:parseInt(modal.dataset.totalEmpanadas)||0,totalGastos:parseFloat(modal.dataset.totalGastos)||0};
+    if(estaOnline){try{await db.collection('cierres').add({...cierreData,ts:firebase.firestore.FieldValue.serverTimestamp()});}catch(e){logError('guardar-cierre',e);}}
+    else{await idbAdd('cierres_pendientes',cierreData);await actualizarBadge();toast('📴 Cierre guardado offline — se sincronizará al reconectar');}
+    carrito=[];metodoPago='efectivo';document.querySelectorAll('.pago-chip').forEach(c=>c.classList.remove('active'));document.querySelector('.pago-chip[data-pago="efectivo"]').classList.add('active');renderCarrito();
+    modal.classList.remove('active');
+    if(estaOnline)toast('✅ Cierre registrado — abriendo WhatsApp...');
+    window.open(`https://wa.me/${whatsappNumero}?text=${encodeURIComponent(resumen)}`,'_blank');
+  });
+
+  /* ════ P1 ROBUSTEZ — 5 TAPS + PIN ════ */
+  let tapCount=0,tapTimer=null;
+  document.getElementById('logoBtn').addEventListener('click',()=>{tapCount++;clearTimeout(tapTimer);if(tapCount>=5){tapCount=0;abrirModalPin();return;}tapTimer=setTimeout(()=>tapCount=0,1500);});
+  function abrirModalPin(){document.getElementById('pinInput').value='';document.getElementById('pinError').textContent='';document.getElementById('modalPin').classList.add('active');}
+  document.getElementById('pinCancelBtn').addEventListener('click',()=>document.getElementById('modalPin').classList.remove('active'));
+  document.getElementById('pinConfirmBtn').addEventListener('click',()=>{
+    if(document.getElementById('pinInput').value===PIN_RAVENTECHS){
+      document.getElementById('modalPin').classList.remove('active');
+      document.getElementById('flagPedidos').checked=!!featuresActuales.pedidosOnlineHabilitado;document.getElementById('flagStock').checked=!!featuresActuales.stockHabilitado;document.getElementById('flagEmpleados').checked=!!featuresActuales.empleadosHabilitado;document.getElementById('flagGastos').checked=!!featuresActuales.gastosHabilitado;
+      document.getElementById('modalFeatures').classList.add('active');
+    }else{document.getElementById('pinError').textContent='PIN incorrecto';}
+  });
+  document.getElementById('modalFeaturesCancel').addEventListener('click',()=>document.getElementById('modalFeatures').classList.remove('active'));
+  document.getElementById('modalFeaturesGuardar').addEventListener('click',()=>{
+    const nuevas={pedidosOnlineHabilitado:document.getElementById('flagPedidos').checked,stockHabilitado:document.getElementById('flagStock').checked,empleadosHabilitado:document.getElementById('flagEmpleados').checked,gastosHabilitado:document.getElementById('flagGastos').checked};
+    db.collection('configuracion').doc('general').set({features:nuevas},{merge:true}).then(()=>{featuresActuales=nuevas;renderPlusStatus();toast('Features actualizadas');document.getElementById('modalFeatures').classList.remove('active');});
+  });
+
+  /* P3 ROBUSTEZ — SERVICE WORKER */
+  if('serviceWorker' in navigator){navigator.serviceWorker.register('/pizzAr/sw-pizzar.js').catch(e=>logError('sw',e));}
+  chequearBackupDiario();
+
+// ══════════ BACKUP ESTÁNDAR PizzAR ══════════
+async function generarBackup(silencioso) {
+  var uid = auth.currentUser ? auth.currentUser.uid : null;
+  if (!uid) return;
+  try {
+    var ventasSnap = await db.collection('ventas').get().catch(function(){return {docs:[]}});
+    var productosSnap = await db.collection('productos').get().catch(function(){return {docs:[]}});
+    var insumosSnap = await db.collection('insumos').get().catch(function(){return {docs:[]}});
+    var cierresSnap = await db.collection('cierres').get().catch(function(){return {docs:[]}});
+    var configSnap = await db.collection('configuracion').doc('general').get().catch(function(){return {exists:false}});
+    var fecha = new Date().toISOString().slice(0,10);
+    var backup = {
+      app:'PizzAR', version:'2.6', fecha:new Date().toISOString(), uid:uid,
+      ventas: ventasSnap.docs.map(function(d){return Object.assign({_id:d.id},d.data());}),
+      productos: productosSnap.docs.map(function(d){return Object.assign({_id:d.id},d.data());}),
+      insumos: insumosSnap.docs.map(function(d){return Object.assign({_id:d.id},d.data());}),
+      cierres: cierresSnap.docs.map(function(d){return Object.assign({_id:d.id},d.data());}),
+      configuracion: configSnap.exists ? configSnap.data() : {}
+    };
+    var json = JSON.stringify(backup, null, 2);
+    localStorage.setItem('pizzar-ultimo-backup', fecha);
+    var el = document.getElementById('ultimoBackupFecha'); if (el) el.textContent = fecha;
+    if (!silencioso) {
+      var blob = new Blob([json], {type:'application/json'});
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a'); a.href=url; a.download='pizzar-backup-'+fecha+'.json'; a.click();
+      URL.revokeObjectURL(url); toast('✅ Backup descargado');
+    }
+  } catch(e) { console.error('Error backup:',e); if(!silencioso) toast('Error al generar backup'); }
+}
+
+async function restaurarBackup(input) {
+  var file = input.files[0]; if (!file) return;
+  if (!auth.currentUser) { toast('Iniciá sesión primero'); return; }
+  if (!confirm('Esto va a REEMPLAZAR todos tus datos con los del backup. ¿Continuar?')) { input.value=''; return; }
+  try {
+    var text = await file.text(); var backup = JSON.parse(text);
+    if (backup.app !== 'PizzAR') { toast('El archivo no es un backup de PizzAR'); return; }
+    toast('Restaurando datos...');
+    var batch = db.batch(); var count = 0;
+    (backup.ventas||[]).forEach(function(v){var id=v._id;var d=Object.assign({},v);delete d._id;batch.set(db.collection('ventas').doc(id),d);if(++count%400===0){batch.commit();batch=db.batch();}});
+    (backup.productos||[]).forEach(function(v){var id=v._id;var d=Object.assign({},v);delete d._id;batch.set(db.collection('productos').doc(id),d);});
+    (backup.insumos||[]).forEach(function(v){var id=v._id;var d=Object.assign({},v);delete d._id;batch.set(db.collection('insumos').doc(id),d);});
+    (backup.cierres||[]).forEach(function(v){var id=v._id;var d=Object.assign({},v);delete d._id;batch.set(db.collection('cierres').doc(id),d);});
+    if(backup.configuracion&&Object.keys(backup.configuracion).length>0){batch.set(db.collection('configuracion').doc('general'),backup.configuracion,{merge:true});}
+    await batch.commit();
+    toast('✅ Backup restaurado'); input.value='';
+    setTimeout(function(){location.reload();},1500);
+  } catch(e) { toast('Error al restaurar: '+e.message); input.value=''; }
+}
+
+function chequearBackupDiario() {
+  var hoy = new Date().toISOString().slice(0,10);
+  var ultimo = localStorage.getItem('pizzar-ultimo-backup');
+  var el = document.getElementById('ultimoBackupFecha'); if (el && ultimo) el.textContent = ultimo;
+  if (ultimo !== hoy) { setTimeout(function(){generarBackup(true);},5000); }
+}
+
+
+firebase.initializeApp(firebaseConfig);
   const auth = firebase.auth();
   const db = firebase.firestore();
 
