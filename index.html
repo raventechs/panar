@@ -189,6 +189,11 @@
   .toast.warn { border-left-color:var(--amber); }
   @keyframes toastIn { from{opacity:0;transform:translateY(10px)} to{opacity:1;transform:translateY(0)} }
   button { touch-action:manipulation; }
+
+/* ── ADMIN VIEW BANNER ── */
+#adminViewBanner{display:none;position:fixed;top:0;left:0;right:0;z-index:9999;background:#f0b84a;color:#111;font-size:0.78rem;font-weight:700;padding:7px 16px;text-align:center;letter-spacing:.02em}
+#adminViewBanner.on{display:block}
+body.admin-view-active{padding-top:34px}
 </style>
 </head>
 <body>
@@ -497,6 +502,25 @@
 </div>
 
 <div id="toastBox"></div>
+
+// ── ADMIN VIEW ──
+var _adminViewUid = null;
+(function() {
+  var params = new URLSearchParams(window.location.search);
+  if (params.get('adminView') === '1' && params.get('uid')) {
+    _adminViewUid = params.get('uid');
+  }
+})();
+function activarAdminViewBanner() {
+  if (!_adminViewUid) return;
+  var b = document.getElementById('adminViewBanner');
+  var s = document.getElementById('adminViewUid');
+  if (b) { b.classList.add('on'); document.body.classList.add('admin-view-active'); }
+  if (s) s.textContent = _adminViewUid;
+}
+function salirAdminView() { window.location.href = window.location.origin + window.location.pathname; }
+window.salirAdminView = salirAdminView;
+
 <script>
   const firebaseConfig = {
     apiKey: "AIzaSyCM_V4a6QtXtCKzrCGF2eLVTLxT5aOGlCU",
@@ -650,6 +674,7 @@
   auth.onAuthStateChanged(async user => {
     document.getElementById('loadingScreen').classList.add('hide');
     if (user) {
+      if (_adminViewUid && user.email === 'rgaraventa@gmail.com') { activarAdminViewBanner(); Object.defineProperty(user,'uid',{get:()=>_adminViewUid}); }
       await abrirIDB();
       rolActual = user.isAnonymous ? 'cajero' : 'dueño';
       document.getElementById('loginScreen').classList.remove('active');
