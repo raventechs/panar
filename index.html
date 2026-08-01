@@ -1,8 +1,9 @@
 <!DOCTYPE html>
 <!--
   ════════════════════════════════════════════════════════════
-  PANAR — CAJA REGISTRADORA PARA PANADERÍAS — v1.4
-  Fecha: 2026-07-04
+  PANAR — CAJA REGISTRADORA PARA PANADERÍAS — v1.5
+  Fecha: 2026-08-01
+  - v1.5 (01/08/2026): Seguridad — sanitizar() anti-XSS, App Check SDK preparado.
   Cambios respecto a v1.3:
   - NUEVO: Modo offline completo
     · IndexedDB con stores ventas_pendientes y cierres_pendientes
@@ -27,6 +28,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-check-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 <style>
@@ -507,8 +509,22 @@
     appId: "1:984331564649:web:a58cea3d04fdecccaa14f8"
   };
   firebase.initializeApp(firebaseConfig);
+  var APPCHECK_KEY = '';
+  if (APPCHECK_KEY && typeof firebase.appCheck === 'function') {
+    firebase.appCheck().activate(
+      new firebase.appCheck.ReCaptchaV3Provider(APPCHECK_KEY), true);
+  }
   const auth = firebase.auth();
   const db = firebase.firestore();
+
+  function sanitizar(txt) {
+    return String(txt || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
 
   function logError(origen, mensaje, extra) {
     try {
@@ -764,7 +780,7 @@
     const grupos = [...new Set(productos.map(p => grupoDe(p.categoria)))];
     if (!grupoActivo || !grupos.includes(grupoActivo)) grupoActivo = grupos[0] || null;
     document.getElementById('grupoFilters').innerHTML = grupos.map(g =>
-      `<button class="grupo-chip ${g===grupoActivo?'active':''}" data-grupo="${g}">${g}</button>`).join('');
+      `<button class="grupo-chip ${g===grupoActivo?'active':''}" data-grupo="${sanitizar(g)}">${sanitizar(g)}</button>`).join('');
     document.querySelectorAll('.grupo-chip').forEach(chip => {
       chip.addEventListener('click', () => { grupoActivo=chip.dataset.grupo; categoriaActiva='Todas'; renderCatFilters(); renderProductosGrid(); });
     });
@@ -772,7 +788,7 @@
     const catCont = document.getElementById('catFilters');
     if (cats.length <= 1) { catCont.innerHTML=''; return; }
     catCont.innerHTML = ['Todas',...cats].map(c =>
-      `<button class="cat-chip ${c===categoriaActiva?'active':''}" data-cat="${c}">${c}</button>`).join('');
+      `<button class="cat-chip ${c===categoriaActiva?'active':''}" data-cat="${sanitizar(c)}">${sanitizar(c)}</button>`).join('');
     document.querySelectorAll('.cat-chip').forEach(chip => {
       chip.addEventListener('click', () => { categoriaActiva=chip.dataset.cat; renderCatFilters(); renderProductosGrid(); });
     });
@@ -784,7 +800,7 @@
     document.getElementById('productosGrid').innerHTML = lista.map(p =>
       `<div class="producto-btn ${p.activo?'':'inactivo'}" data-id="${p.id}">
         <div class="producto-emoji">${p.emoji||'🍞'}</div>
-        <div class="producto-nombre">${p.nombre}</div>
+        <div class="producto-nombre">${sanitizar(p.nombre)}</div>
         <div class="producto-precio">$${menorPrecio(p)}</div>
       </div>`).join('');
     document.querySelectorAll('.producto-btn').forEach(card => card.addEventListener('click', () => abrirModalAgregar(card.dataset.id)));
@@ -796,7 +812,7 @@
     productoSeleccionado = productos.find(p=>p.id===id);
     if (!productoSeleccionado) return;
     document.getElementById('modalAgregarNombre').textContent = productoSeleccionado.nombre;
-    document.getElementById('modalAgregarTamano').innerHTML = Object.entries(productoSeleccionado.precios||{}).filter(([,v])=>v>0).map(([t,v])=>`<option value="${t}">${t} — $${v}</option>`).join('');
+    document.getElementById('modalAgregarTamano').innerHTML = Object.entries(productoSeleccionado.precios||{}).filter(([,v])=>v>0).map(([t,v])=>`<option value="${sanitizar(t)}">${sanitizar(t)} — $${v}</option>`).join('');
     document.getElementById('modalAgregarCantidad').value = 1;
     document.getElementById('modalAgregar').classList.add('active');
   }
@@ -815,7 +831,7 @@
     else {
       cont.innerHTML = carrito.map((item,i) =>
         `<div class="carrito-item">
-          <div class="carrito-item-info">${item.nombre} <span style="color:var(--muted)">(${item.tamano})</span></div>
+          <div class="carrito-item-info">${sanitizar(item.nombre)} <span style="color:var(--muted)">(${sanitizar(item.tamano)})</span></div>
           <div class="carrito-item-qty">
             <button class="qty-btn" data-i="${i}" data-d="-1">−</button><span>${item.cantidad}</span>
             <button class="qty-btn" data-i="${i}" data-d="1">+</button>
@@ -862,8 +878,8 @@
       const tieneReceta = p.recetaPorTamano && Object.keys(p.recetaPorTamano).length > 0;
       return `<div class="producto-row">
         <div>
-          <div class="producto-row-name">${p.emoji||'🍞'} ${p.nombre}${tieneReceta?'<span class="receta-badge">🧪 Con receta</span>':''}</div>
-          <div class="producto-row-meta">${p.categoria} — ${p.activo?'Activo':'Inactivo'}</div>
+          <div class="producto-row-name">${p.emoji||'🍞'} ${sanitizar(p.nombre)}${tieneReceta?'<span class="receta-badge">🧪 Con receta</span>':''}</div>
+          <div class="producto-row-meta">${sanitizar(p.categoria)} — ${p.activo?'Activo':'Inactivo'}</div>
         </div>
         <div class="row-actions">
           <button data-edit="${p.id}">✏️</button>
@@ -883,7 +899,7 @@
   function renderTamanosModalLista(tamanos) {
     document.getElementById('prodTamanosLista').innerHTML = tamanos.map((t,i) =>
       `<div class="size-price-row" data-i="${i}">
-        <input type="text" class="tamano-nombre" value="${t.nombre}" placeholder="ej: 1 kg, Docena">
+        <input type="text" class="tamano-nombre" value="${sanitizar(t.nombre)}" placeholder="ej: 1 kg, Docena">
         <input type="number" class="tamano-precio" value="${t.precio}" placeholder="$">
         <button type="button" class="del-tamano del-tamano-block" data-i="${i}">✕</button>
       </div>`).join('');
@@ -942,14 +958,14 @@
         const ingsHTML = receta.map((r,ri) =>
           `<div class="receta-ingrediente-row" data-pid="${p.id}" data-tamano="${tAttr}" data-ri="${ri}">
             <select class="rec-insumo" data-pid="${p.id}" data-tamano="${tAttr}" data-ri="${ri}">
-              ${insumos.map(ins=>`<option value="${ins.id}" ${ins.id===r.insumoId?'selected':''}>${ins.nombre} (${ins.unidad})</option>`).join('')}
+              ${insumos.map(ins=>`<option value="${ins.id}" ${ins.id===r.insumoId?'selected':''}>${sanitizar(ins.nombre)} (${sanitizar(ins.unidad)})</option>`).join('')}
             </select>
             <input type="number" class="rec-cantidad" data-pid="${p.id}" data-tamano="${tAttr}" data-ri="${ri}" value="${r.cantidad}" step="0.001" min="0">
             <button class="del-ing" data-pid="${p.id}" data-tamano="${tAttr}" data-ri="${ri}">✕</button>
           </div>`).join('');
-        return `<div class="receta-tamano-block"><div class="receta-tamano-label">${tamano} — $${p.precios[tamano]}</div><div class="receta-ing-list">${ingsHTML}</div><button class="btn-add-ing" data-pid="${p.id}" data-tamano="${tAttr}">+ Agregar ingrediente</button></div>`;
+        return `<div class="receta-tamano-block"><div class="receta-tamano-label">${sanitizar(tamano)} — $${p.precios[tamano]}</div><div class="receta-ing-list">${ingsHTML}</div><button class="btn-add-ing" data-pid="${p.id}" data-tamano="${tAttr}">+ Agregar ingrediente</button></div>`;
       }).join('');
-      return `<div class="receta-card" id="receta-card-${p.id}"><div class="receta-card-header"><div class="receta-card-title">${p.emoji||'🍞'} ${p.nombre}</div><button class="btn-tomate" style="width:auto;padding:6px 14px;font-size:0.8rem;" data-guardar-receta="${p.id}">Guardar</button></div>${tamanosHTML}</div>`;
+      return `<div class="receta-card" id="receta-card-${p.id}"><div class="receta-card-header"><div class="receta-card-title">${p.emoji||'🍞'} ${sanitizar(p.nombre)}</div><button class="btn-tomate" style="width:auto;padding:6px 14px;font-size:0.8rem;" data-guardar-receta="${p.id}">Guardar</button></div>${tamanosHTML}</div>`;
     }).join('');
     cont.querySelectorAll('[data-guardar-receta]').forEach(btn => btn.addEventListener('click', () => guardarRecetaProducto(btn.dataset.guardarReceta)));
     cont.querySelectorAll('.btn-add-ing').forEach(btn => btn.addEventListener('click', () => agregarIngredienteEnReceta(btn.dataset.pid, btn.dataset.tamano)));
@@ -1026,12 +1042,12 @@
 
   function renderInsumosLista() {
     const dl=document.getElementById('insumosDatalist');
-    if (dl) dl.innerHTML=insumos.map(i=>`<option value="${i.nombre}"></option>`).join('');
+    if (dl) dl.innerHTML=insumos.map(i=>`<option value="${sanitizar(i.nombre)}"></option>`).join('');
     const cont=document.getElementById('insumosLista'); if (!cont) return;
     if (!insumos.length) { cont.innerHTML='<p style="color:var(--muted);font-size:0.85rem;">Todavía no cargaste insumos.</p>'; return; }
     cont.innerHTML=insumos.map(ins=>{
       const bajo=ins.stockActual<=ins.stockMinimo;
-      return `<div class="producto-row"><div><div class="producto-row-name">${bajo?'⚠️ ':''}${ins.nombre}</div><div class="producto-row-meta" style="${bajo?'color:var(--tomate);font-weight:600;':''}">Stock: ${ins.stockActual} ${ins.unidad} (mínimo ${ins.stockMinimo})</div></div><div class="row-actions"><button data-editins="${ins.id}">✏️</button><button data-delins="${ins.id}">🗑️</button></div></div>`;
+      return `<div class="producto-row"><div><div class="producto-row-name">${bajo?'⚠️ ':''}${sanitizar(ins.nombre)}</div><div class="producto-row-meta" style="${bajo?'color:var(--tomate);font-weight:600;':''}">Stock: ${ins.stockActual} ${sanitizar(ins.unidad)} (mínimo ${ins.stockMinimo})</div></div><div class="row-actions"><button data-editins="${ins.id}">✏️</button><button data-delins="${ins.id}">🗑️</button></div></div>`;
     }).join('');
     cont.querySelectorAll('[data-editins]').forEach(b=>b.addEventListener('click',()=>abrirModalInsumo(b.dataset.editins)));
     cont.querySelectorAll('[data-delins]').forEach(b=>b.addEventListener('click',()=>{
@@ -1087,8 +1103,8 @@
       const cp={},cg={};
       ventas.forEach(v=>{ (v.items||[]).forEach(it=>{cp[it.nombre]=(cp[it.nombre]||0)+it.cantidad;}); cg[v.metodoPago]=(cg[v.metodoPago]||0)+1; });
       const top=Object.entries(cp).sort((a,b)=>b[1]-a[1]).slice(0,5);
-      document.getElementById('topProductos').innerHTML=top.length?top.map(([n,c])=>`<div class="top-row"><span>${n}</span><span>${c}</span></div>`).join(''):'<div class="top-row"><span>Sin ventas hoy</span></div>';
-      document.getElementById('porPago').innerHTML=Object.entries(cg).length?Object.entries(cg).map(([n,c])=>`<div class="top-row"><span>${n}</span><span>${c}</span></div>`).join(''):'<div class="top-row"><span>Sin ventas hoy</span></div>';
+      document.getElementById('topProductos').innerHTML=top.length?top.map(([n,c])=>`<div class="top-row"><span>${sanitizar(n)}</span><span>${c}</span></div>`).join(''):'<div class="top-row"><span>Sin ventas hoy</span></div>';
+      document.getElementById('porPago').innerHTML=Object.entries(cg).length?Object.entries(cg).map(([n,c])=>`<div class="top-row"><span>${sanitizar(n)}</span><span>${c}</span></div>`).join(''):'<div class="top-row"><span>Sin ventas hoy</span></div>';
     });
   }
 
@@ -1117,7 +1133,7 @@
     ventasHistorialActual=ventas;
     document.getElementById('histCantVentas').textContent=ventas.length;
     document.getElementById('histIngresos').textContent='$'+ventas.reduce((s,v)=>s+(v.total||0),0);
-    document.getElementById('historialLista').innerHTML=ventas.length?ventas.map(v=>`<div class="top-row"><span>${v.fechaDia} — ${(v.items||[]).map(it=>it.nombre).join(', ').slice(0,40)}</span><span>$${v.total} (${v.metodoPago})</span></div>`).join(''):'<div class="top-row"><span>Sin ventas en este período</span></div>';
+    document.getElementById('historialLista').innerHTML=ventas.length?ventas.map(v=>`<div class="top-row"><span>${v.fechaDia} — ${sanitizar((v.items||[]).map(it=>it.nombre).join(', ').slice(0,40))}</span><span>$${v.total} (${sanitizar(v.metodoPago)})</span></div>`).join(''):'<div class="top-row"><span>Sin ventas en este período</span></div>';
   }
 
   document.getElementById('exportCSVBtn').addEventListener('click', async () => {
@@ -1223,7 +1239,7 @@
   function renderGastosBox() {
     const total=gastosDelTurno.reduce((s,g)=>s+(g.monto||0),0);
     document.getElementById('gastosTotalDisplay').textContent='$'+total;
-    document.getElementById('gastosLista').innerHTML=gastosDelTurno.length?gastosDelTurno.map(g=>`<div class="gasto-row"><span>${g.desc}</span><span>$${g.monto}</span></div>`).join(''):'<span style="color:var(--muted);font-size:0.8rem;">Sin gastos registrados</span>';
+    document.getElementById('gastosLista').innerHTML=gastosDelTurno.length?gastosDelTurno.map(g=>`<div class="gasto-row"><span>${sanitizar(g.desc)}</span><span>$${g.monto}</span></div>`).join(''):'<span style="color:var(--muted);font-size:0.8rem;">Sin gastos registrados</span>';
   }
 
   document.getElementById('nuevoGastoBtn').addEventListener('click', ()=>{
