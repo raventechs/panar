@@ -3,7 +3,7 @@
   "short_name": "PanAR",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#FAFAFA",
+  "background_color": "#FFFFFF",
   "theme_color": "#E67E22",
   "lang": "es",
   "icons": [
