@@ -3,8 +3,8 @@
 
 const CACHE_NAME = 'panar-v1.4';
 const SHELL = [
-  '/panar/',
-  '/panar/index.html',
+  '/',
+  '/index.html',
   'https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap',
   'https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js',
   'https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js',
@@ -49,7 +49,7 @@ self.addEventListener('fetch', e => {
         return response;
       }).catch(() => {
         if (e.request.mode === 'navigate') {
-          return caches.match('/panar/index.html');
+          return caches.match('/index.html');
         }
       });
     })
