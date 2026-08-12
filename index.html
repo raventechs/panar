@@ -1413,7 +1413,7 @@ var __rtPWA = (function() {
 
   /* P3 ROBUSTEZ — SERVICE WORKER */
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('/panar/sw-panar.js').catch(e=>logError('sw',e));
+    navigator.serviceWorker.register('/sw-panar.js').catch(e=>logError('sw',e));
   }
   chequearBackupDiario();
 
