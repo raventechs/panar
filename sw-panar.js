@@ -1,7 +1,7 @@
 // sw-panar.js — Service Worker PanAR v1.4
 // P3 ROBUSTEZ: cachea shell para uso offline completo
 
-const CACHE_NAME = 'panar-v1.4';
+const CACHE_NAME = 'panar-v1.5';
 const SHELL = [
   '/',
   '/index.html',
@@ -35,6 +35,17 @@ self.addEventListener('fetch', e => {
     return;
   }
 
+  // Navegación (HTML principal): siempre ir a buscar lo último primero.
+  if (e.request.mode === 'navigate') {
+    e.respondWith(
+      fetch(e.request).then(response => {
+        caches.open(CACHE_NAME).then(c => c.put(e.request, response.clone()));
+        return response;
+      }).catch(() => caches.match('/index.html'))
+    );
+    return;
+  }
+
   // Shell y assets estáticos: cache-first con fallback a red
   e.respondWith(
     caches.match(e.request).then(cached => {
@@ -47,11 +58,7 @@ self.addEventListener('fetch', e => {
           caches.open(CACHE_NAME).then(c => c.put(e.request, response.clone()));
         }
         return response;
-      }).catch(() => {
-        if (e.request.mode === 'navigate') {
-          return caches.match('/index.html');
-        }
-      });
+      }).catch(() => {});
     })
   );
 });
