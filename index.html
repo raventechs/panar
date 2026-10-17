@@ -1,9 +1,10 @@
 <!DOCTYPE html>
 <!--
   ════════════════════════════════════════════════════════════
-  PANAR — CAJA REGISTRADORA PARA PANADERÍAS — v1.4
-  Fecha: 2026-07-04
-  Cambios respecto a v1.3:
+  PANAR — CAJA REGISTRADORA PARA PANADERÍAS — v1.5
+  Fecha: 2026-10-17
+  v1.5: MODO PRÁCTICA (Configuración → 🎓): carga catálogo con precios actuales (pan francés ≈ $5.500 el kilo), 14 días de ventas y gastos marcados _demo; botón para quitarlos sin tocar datos reales.
+  Cambios respecto a v1.3 (v1.4, 2026-07-04):
   - NUEVO: Modo offline completo
     · IndexedDB con stores ventas_pendientes y cierres_pendientes
     · Detección de conexión: navigator.onLine + eventos online/offline
@@ -414,6 +415,12 @@ var __rtPWA = (function() {
         <label>Horario de atención</label><input type="text" id="cfgHorario" placeholder="Lun a Dom 7:00 - 13:00">
         <button class="btn-tomate" style="margin-top:12px;" id="guardarCfgBtn">Guardar</button>
       </div>
+      <div class="config-section">
+        <h4>🎓 Modo Práctica</h4>
+        <p style="font-size:0.78rem;color:var(--muted);margin-bottom:10px">Carga una panadería de ejemplo con precios actuales (pan francés ≈ $5.500 el kilo), ventas de los últimos 14 días y gastos. Sirve para aprender o mostrar la app. Se puede quitar con un botón sin tocar tus datos reales.</p>
+        <button class="btn-secondary" style="width:auto;padding:10px 18px;" id="practicaCargarBtn">🎓 Cargar datos de práctica</button>
+        <button class="btn-secondary" style="width:auto;padding:10px 18px;color:var(--tomate);border-color:var(--tomate);" id="practicaQuitarBtn">🧽 Quitar datos de práctica</button>
+      </div>
       <div class="config-section" id="cfgWhatsappSection" style="display:none;">
         <h4>WhatsApp para cierre de caja</h4>
         <p style="font-size:0.78rem;color:var(--muted);margin-bottom:8px;">Formato internacional sin +: 5491112345678</p>
@@ -781,13 +788,13 @@ var __rtPWA = (function() {
     });
   }
 
-  function precargarMenuEjemplo() {
+  function precargarMenuEjemplo(opts) {
     const pan = (n,e,kg) => ({ nombre:n, categoria:'Panes', emoji:e, precios:{'1/4 kg':Math.round(kg*0.25),'1/2 kg':Math.round(kg*0.5),'1 kg':kg}, activo:true });
     const factura = (n,e,u) => ({ nombre:n, categoria:'Facturas', emoji:e, precios:{'Unidad':u,'Media docena':Math.round(u*5.7),'Docena':Math.round(u*10.8)}, activo:true });
     const torta = (n,e,p,en) => ({ nombre:n, categoria:'Tortas', emoji:e, precios:{'Porción':p,'Entera':en}, activo:true });
     const simple = (n,e,cat,p) => ({ nombre:n, categoria:cat, emoji:e, precios:{'Único':p}, activo:true });
     const bebida = (n,e,cat,t) => ({ nombre:n, categoria:cat, emoji:e, precios:t, activo:true });
-    [
+    const _lista = [
       pan('Pan francés','🥖',2800), pan('Pan flauta','🥖',2900), pan('Pan lactal casero','🍞',3200),
       pan('Pan de salvado','🍞',3400), pan('Pan de campo','🍞',3300), pan('Pan integral','🍞',3500),
       pan('Pan dulce de manteca','🥐',3600), pan('Grisines (x10)','🥖',2000),
@@ -804,7 +811,9 @@ var __rtPWA = (function() {
       bebida('Agua sin gas','💧','Gaseosas',{'500ml':1000}),
       simple('Café con leche','☕','Lácteos',1800), simple('Té','🍵','Lácteos',1500),
       simple('Manteca (1/4)','🧈','Extras',1200), simple('Dulce de leche (1/4kg)','🍯','Extras',1800),
-    ].forEach(p => db.collection('productos').add(p));
+    ].map(p => opts ? _escalarProd(p, opts.factor) : p);
+    if (opts && opts.devolver) return _lista;
+    _lista.forEach(p => db.collection('productos').add(p));
   }
 
   const GRUPOS_MAP = { 'Panes':'Panes','Facturas':'Facturas','Tortas':'Tortas','Sandwiches':'Sandwiches','Gaseosas':'Bebidas','Lácteos':'Bebidas','Extras':'Extras','Otros':'Otros' };
@@ -1247,6 +1256,72 @@ var __rtPWA = (function() {
 
   document.getElementById('limpiarDuplicadosBtn').addEventListener('click', ejecutarLimpiarDuplicados);
   document.getElementById('limpiarDuplicadosBtn2').addEventListener('click', ejecutarLimpiarDuplicados);
+  
+  // ══════════ MODO PRÁCTICA ══════════
+  // Todo lo que se crea acá lleva _demo:true y se quita sin tocar datos reales.
+  function _escalarProd(p, f) {
+    const precios = {}; Object.keys(p.precios).forEach(k => precios[k] = Math.max(100, Math.round(p.precios[k] * f / 100) * 100));
+    return Object.assign({}, p, { precios });
+  }
+  const _rnd = (a, b) => a + Math.floor(Math.random() * (b - a + 1));
+  async function _commitOps(ops) {
+    for (let i = 0; i < ops.length; i += 400) {
+      const b = db.batch();
+      ops.slice(i, i + 400).forEach(o => o[1] === null ? b.delete(o[0]) : b.set(o[0], o[1]));
+      await b.commit();
+    }
+  }
+  async function cargarPractica() {
+    if (!confirm('Se carga una panadería de práctica: catálogo (si no tenés productos), ventas de 14 días y gastos de mentira. Se pueden quitar después. ¿Seguir?')) return;
+    try {
+      const ya = await db.collection('ventas').where('_demo', '==', true).limit(1).get();
+      if (!ya.empty) { toast('Ya hay una práctica cargada. Quitala primero.'); return; }
+      toast('Cargando práctica…');
+      const ops = [], f = 5500/2800;
+      const lista = precargarMenuEjemplo({ factor: f, devolver: true });
+      let base = productos.length ? productos : null;
+      if (!base) {
+        base = lista.map(p => { const r = db.collection('productos').doc(); ops.push([r, Object.assign({}, p, { _demo: true })]); return Object.assign({ id: r.id }, p); });
+      }
+      const hoy = new Date();
+      for (let d = 0; d < 14; d++) {
+        const dia = new Date(hoy); dia.setDate(hoy.getDate() - d);
+        const n = _rnd(55, 85);
+        for (let k = 0; k < n; k++) {
+          const items = [], q = _rnd(1, 4);
+          for (let j = 0; j < q; j++) {
+            const pr = base[_rnd(0, base.length - 1)], tams = Object.keys(pr.precios), t = tams[_rnd(0, tams.length - 1)];
+            items.push({ productoId: pr.id || 'demo', nombre: pr.nombre, categoria: pr.categoria, tamano: t, precio: pr.precios[t], cantidad: _rnd(1, 2) });
+          }
+          const total = items.reduce((s, it) => s + it.precio * it.cantidad, 0), r = Math.random();
+          const f2 = new Date(dia); f2.setHours(_rnd(9, 22), _rnd(0, 59), _rnd(0, 59));
+          ops.push([db.collection('ventas').doc(), { items, total, metodoPago: r < 0.5 ? 'efectivo' : (r < 0.8 ? 'transferencia' : 'debito'), fecha: f2.toISOString(), fechaDia: f2.toISOString().slice(0, 10), ts: firebase.firestore.Timestamp.fromDate(f2), _demo: true }]);
+        }
+      }
+      [['Harina 50 kg x4',120000,0],['Manteca y materias primas',90000,1],['Gas',40000,2],['Luz',70000,4]].forEach(function (g) {
+        const f3 = new Date(hoy); f3.setDate(hoy.getDate() - g[2]);
+        ops.push([db.collection('gastos').doc(), { desc: g[0], monto: g[1], fechaDia: f3.toISOString().slice(0, 10), ts: firebase.firestore.Timestamp.fromDate(f3), _demo: true }]);
+      });
+      await _commitOps(ops);
+      toast('✅ Práctica cargada: mirá Reportes e Historial');
+    } catch (e) { logError('cargarPractica', e.message); toast('Error: ' + e.message); }
+  }
+  async function quitarPractica() {
+    if (!confirm('Se quitan SOLO los datos de práctica (ventas, gastos y productos marcados). Tus datos reales no se tocan. ¿Seguir?')) return;
+    try {
+      toast('Quitando práctica…');
+      const ops = [];
+      for (const c of ['ventas', 'gastos', 'productos']) {
+        const s = await db.collection(c).where('_demo', '==', true).get();
+        s.forEach(d => ops.push([d.ref, null]));
+      }
+      await _commitOps(ops);
+      toast('✅ Datos de práctica quitados');
+    } catch (e) { logError('quitarPractica', e.message); toast('Error: ' + e.message); }
+  }
+  document.getElementById('practicaCargarBtn').addEventListener('click', cargarPractica);
+  document.getElementById('practicaQuitarBtn').addEventListener('click', quitarPractica);
+
   document.getElementById('restablecerCatalogoBtn').addEventListener('click', ejecutarRestablecerCatalogo);
   document.getElementById('restablecerCatalogoBtn2').addEventListener('click', ejecutarRestablecerCatalogo);
 
