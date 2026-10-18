@@ -1,7 +1,8 @@
 <!DOCTYPE html>
 <!--
   ════════════════════════════════════════════════════════════
-  PANAR — CAJA REGISTRADORA PARA PANADERÍAS — v1.5
+  PANAR — CAJA REGISTRADORA PARA PANADERÍAS — v1.6
+  v1.6: DATOS SEPARADOS POR NEGOCIO (negocios/{uid}/…). El cajero entra con el link del dueño (Configuración → Acceso Punto de Venta) + PIN, validado por reglas de Firestore. Requiere publicar firestore.rules.
   Fecha: 2026-10-17
   v1.5: MODO PRÁCTICA (Configuración → 🎓): carga catálogo con precios actuales (pan francés ≈ $5.500 el kilo), 14 días de ventas y gastos marcados _demo; botón para quitarlos sin tocar datos reales.
   Cambios respecto a v1.3 (v1.4, 2026-07-04):
@@ -432,6 +433,11 @@ var __rtPWA = (function() {
         <p style="font-size:0.78rem;color:var(--muted);margin-bottom:8px;">PIN para que tu cajero entre solo a Caja.</p>
         <input type="text" id="cfgPinCajero" inputmode="numeric" maxlength="6" placeholder="Ej: 2468">
         <button class="btn-tomate" style="margin-top:10px;" id="guardarPinCajeroBtn">Guardar PIN</button>
+        <div style="margin-top:14px;">
+          <p style="font-size:0.78rem;color:var(--muted);margin-bottom:6px;">Link de acceso del cajero: abrilo una vez en el celular/PC del cajero, después entra con el PIN.</p>
+          <input type="text" id="cfgLinkCajero" readonly onclick="this.select()">
+          <button class="btn-tomate" style="margin-top:8px;" id="copiarLinkCajeroBtn">Copiar link</button>
+        </div>
       </div>
       <div class="config-section">
         <h4>Limpiar duplicados</h4>
@@ -567,6 +573,37 @@ var __rtPWA = (function() {
   const auth = firebase.auth();
   const db = firebase.firestore();
 
+  /* ══ AISLAMIENTO POR NEGOCIO (v2.8/1.6): todos los datos viven en negocios/{uid}/… ══ */
+  let OWNER = null;
+  function col(n){ if(!OWNER) throw new Error('Sin negocio activo'); return db.collection('negocios').doc(OWNER).collection(n); }
+  try{ const q=new URLSearchParams(location.search).get('n'); if(q && /^[A-Za-z0-9]{10,40}$/.test(q)) localStorage.setItem('rt_negocio',q); }catch(_){}
+  async function resolverNegocio(user){
+    try{
+      if(!user.isAnonymous){
+        OWNER = user.uid;
+        const r = col('configuracion').doc('general');
+        const s = await r.get();
+        if(!s.exists || !s.data().pinCajero){ await r.set({pinCajero:String(1000+Math.floor(Math.random()*9000))},{merge:true}); }
+        const el=document.getElementById('cfgLinkCajero'); if(el) el.value = location.origin+location.pathname+'?n='+OWNER;
+        return true;
+      }
+      let n=null; try{ n=localStorage.getItem('rt_negocio'); }catch(_){}
+      if(!n) throw new Error('sin negocio');
+      OWNER = n;
+      const ref = db.collection('negocios').doc(n).collection('cajeros').doc(user.uid);
+      if(window._pinPend){ const p=window._pinPend; window._pinPend=null; await ref.set({pin:p, ts:firebase.firestore.FieldValue.serverTimestamp()}); return true; }
+      const s2 = await ref.get(); if(!s2.exists) throw new Error('sin permiso');
+      return true;
+    }catch(e){
+      OWNER = null;
+      const msg = user.isAnonymous ? 'PIN incorrecto o link de cajero inválido' : 'No se pudo abrir tu negocio: '+e.message;
+      try{ document.getElementById('loginError').textContent = msg; }catch(_){}
+      try{ await auth.signOut(); }catch(_){}
+      return false;
+    }
+  }
+
+
   function logError(origen, mensaje, extra) {
     try {
       const uid = auth.currentUser ? auth.currentUser.uid : 'anonimo';
@@ -666,13 +703,13 @@ var __rtPWA = (function() {
       const ventas = await idbGetAll('ventas_pendientes');
       for (const v of ventas) {
         const { id, ...data } = v;
-        await db.collection('ventas').add({ ...data, ts: firebase.firestore.FieldValue.serverTimestamp() });
+        await col('ventas').add({ ...data, ts: firebase.firestore.FieldValue.serverTimestamp() });
         await idbDelete('ventas_pendientes', id);
       }
       const cierres = await idbGetAll('cierres_pendientes');
       for (const c of cierres) {
         const { id, ...data } = c;
-        await db.collection('cierres').add({ ...data, ts: firebase.firestore.FieldValue.serverTimestamp() });
+        await col('cierres').add({ ...data, ts: firebase.firestore.FieldValue.serverTimestamp() });
         await idbDelete('cierres_pendientes', id);
       }
       await actualizarBadge();
@@ -707,6 +744,7 @@ var __rtPWA = (function() {
   auth.onAuthStateChanged(async user => {
     document.getElementById('loadingScreen').classList.add('hide');
     if (user) {
+      if(!(await resolverNegocio(user))) return;
       await abrirIDB();
       rolActual = user.isAnonymous ? 'cajero' : 'dueño';
       document.getElementById('loginScreen').classList.remove('active');
@@ -734,21 +772,25 @@ var __rtPWA = (function() {
   document.getElementById('loginGoogleBtn').addEventListener('click', () => {
     auth.signInWithPopup(new firebase.auth.GoogleAuthProvider()).catch(() => { document.getElementById('loginError').textContent = 'No se pudo iniciar sesión con Google'; });
   });
-  document.getElementById('loginCajeroBtn').addEventListener('click', () => {
-    db.collection('configuracion').doc('general').get().then(doc => {
-      pinCajeroActual = (doc.exists && doc.data().pinCajero) ? doc.data().pinCajero : '2468';
-      document.getElementById('pinCajeroInput').value = '';
-      document.getElementById('pinCajeroError').textContent = '';
-      document.getElementById('modalPinCajero').classList.add('active');
-      setTimeout(() => document.getElementById('pinCajeroInput').focus(), 50);
-    });
+  document.getElementById('loginCajeroBtn').addEventListener('click',()=>{
+    let n=null; try{ n=localStorage.getItem('rt_negocio'); }catch(_){}
+    if(!n){ document.getElementById('loginError').textContent='Pedile al dueño el link de acceso de cajero (Configuración → Acceso Punto de Venta).'; return; }
+    document.getElementById('loginError').textContent='';
+    document.getElementById('pinCajeroInput').value=''; document.getElementById('pinCajeroError').textContent='';
+    document.getElementById('modalPinCajero').classList.add('active');
+    setTimeout(()=>document.getElementById('pinCajeroInput').focus(),50);
   });
   document.getElementById('pinCajeroCancelBtn').addEventListener('click', () => document.getElementById('modalPinCajero').classList.remove('active'));
-  document.getElementById('pinCajeroConfirmBtn').addEventListener('click', () => {
-    if (document.getElementById('pinCajeroInput').value === pinCajeroActual) {
-      document.getElementById('modalPinCajero').classList.remove('active');
-      auth.signInAnonymously().catch(() => { document.getElementById('pinCajeroError').textContent = 'No se pudo ingresar'; });
-    } else { document.getElementById('pinCajeroError').textContent = 'PIN incorrecto'; }
+  document.getElementById('pinCajeroConfirmBtn').addEventListener('click',()=>{
+    const pin=document.getElementById('pinCajeroInput').value.trim();
+    if(pin.length<4){ document.getElementById('pinCajeroError').textContent='PIN incorrecto'; return; }
+    window._pinPend=pin;
+    document.getElementById('modalPinCajero').classList.remove('active');
+    auth.signInAnonymously().catch(()=>{ window._pinPend=null; document.getElementById('loginError').textContent='No se pudo ingresar'; });
+  });
+  document.getElementById('copiarLinkCajeroBtn').addEventListener('click',()=>{
+    const el=document.getElementById('cfgLinkCajero'); el.select();
+    (navigator.clipboard?navigator.clipboard.writeText(el.value):Promise.reject()).then(()=>toast('Link copiado'),()=>{ try{document.execCommand('copy');toast('Link copiado');}catch(_){toast('Copialo a mano');} });
   });
   document.getElementById('pinCajeroInput').addEventListener('keydown', e => { if (e.key==='Enter') document.getElementById('pinCajeroConfirmBtn').click(); });
   document.getElementById('darkToggleBtn').addEventListener('click', () => {
@@ -779,7 +821,7 @@ var __rtPWA = (function() {
       });
       return;
     }
-    db.collection('productos').onSnapshot(snap => {
+    col('productos').onSnapshot(snap => {
       productos = snap.docs.map(d => ({ id:d.id, ...d.data() }));
       if (productos.length === 0) precargarMenuEjemplo();
       if (idb) idbCacheCatalogo(productos);
@@ -813,7 +855,7 @@ var __rtPWA = (function() {
       simple('Manteca (1/4)','🧈','Extras',1200), simple('Dulce de leche (1/4kg)','🍯','Extras',1800),
     ].map(p => opts ? _escalarProd(p, opts.factor) : p);
     if (opts && opts.devolver) return _lista;
-    _lista.forEach(p => db.collection('productos').add(p));
+    _lista.forEach(p => col('productos').add(p));
   }
 
   const GRUPOS_MAP = { 'Panes':'Panes','Facturas':'Facturas','Tortas':'Tortas','Sandwiches':'Sandwiches','Gaseosas':'Bebidas','Lácteos':'Bebidas','Extras':'Extras','Otros':'Otros' };
@@ -903,7 +945,7 @@ var __rtPWA = (function() {
     const ventaData = { items:carrito, total, metodoPago, fecha:new Date().toISOString(), fechaDia:new Date().toISOString().slice(0,10) };
     if (estaOnline) {
       try {
-        await db.collection('ventas').add({ ...ventaData, ts:firebase.firestore.FieldValue.serverTimestamp() });
+        await col('ventas').add({ ...ventaData, ts:firebase.firestore.FieldValue.serverTimestamp() });
         descontarStockPorVenta(itemsVendidos);
         toast('Venta registrada — $' + total);
       } catch(e) { logError('cobrar',e.message); toast('Error al guardar. Reintentá.'); return; }
@@ -932,7 +974,7 @@ var __rtPWA = (function() {
     }).join('');
     document.querySelectorAll('[data-edit]').forEach(b => b.addEventListener('click', () => abrirModalProducto(b.dataset.edit)));
     document.querySelectorAll('[data-del]').forEach(b => b.addEventListener('click', () => {
-      if (confirm('¿Eliminar este producto?')) db.collection('productos').doc(b.dataset.del).delete().then(()=>toast('Producto eliminado'));
+      if (confirm('¿Eliminar este producto?')) col('productos').doc(b.dataset.del).delete().then(()=>toast('Producto eliminado'));
     }));
   }
 
@@ -982,7 +1024,7 @@ var __rtPWA = (function() {
     const data = { nombre:document.getElementById('prodNombre').value.trim(), categoria:document.getElementById('prodCategoria').value, emoji:document.getElementById('prodEmoji').value.trim(), precios, activo:document.getElementById('prodActivo').checked };
     if (!data.nombre) { toast('Falta el nombre'); return; }
     if (!Object.keys(precios).length) { toast('Agregá al menos un tamaño'); return; }
-    const ref = editandoProductoId ? db.collection('productos').doc(editandoProductoId) : db.collection('productos').doc();
+    const ref = editandoProductoId ? col('productos').doc(editandoProductoId) : col('productos').doc();
     ref.set(data,{merge:true}).then(()=>{ toast('Producto guardado'); document.getElementById('modalProducto').classList.remove('active'); }).catch(e=>logError('guardarProducto',e));
   });
 
@@ -1030,7 +1072,7 @@ var __rtPWA = (function() {
   }
 
   function guardarRecetaProducto(pid) {
-    db.collection('productos').doc(pid).set({ recetaPorTamano:leerRecetaDesdeDOM(pid) },{merge:true}).then(()=>toast('Receta guardada ✓')).catch(e=>logError('guardarReceta',e));
+    col('productos').doc(pid).set({ recetaPorTamano:leerRecetaDesdeDOM(pid) },{merge:true}).then(()=>toast('Receta guardada ✓')).catch(e=>logError('guardarReceta',e));
   }
 
   function agregarIngredienteEnReceta(pid, tamano) {
@@ -1059,7 +1101,7 @@ var __rtPWA = (function() {
 
   /* ════ STOCK ════ */
   function cargarInsumos() {
-    db.collection('insumos').onSnapshot(snap => { insumos=snap.docs.map(d=>({id:d.id,...d.data()})); renderInsumosLista(); });
+    col('insumos').onSnapshot(snap => { insumos=snap.docs.map(d=>({id:d.id,...d.data()})); renderInsumosLista(); });
   }
 
   function listaInsumosBasicos() {
@@ -1079,7 +1121,7 @@ var __rtPWA = (function() {
     const ex=new Set(insumos.map(i=>i.nombre.trim().toLowerCase()));
     const faltantes=listaInsumosBasicos().filter(b=>!ex.has(b.nombre.trim().toLowerCase()));
     if (!faltantes.length) { toast('Ya tenés todos los insumos básicos'); return; }
-    faltantes.forEach(i=>db.collection('insumos').add(i));
+    faltantes.forEach(i=>col('insumos').add(i));
     toast(`Se agregaron ${faltantes.length} insumos básicos`);
   });
 
@@ -1094,7 +1136,7 @@ var __rtPWA = (function() {
     }).join('');
     cont.querySelectorAll('[data-editins]').forEach(b=>b.addEventListener('click',()=>abrirModalInsumo(b.dataset.editins)));
     cont.querySelectorAll('[data-delins]').forEach(b=>b.addEventListener('click',()=>{
-      if(confirm('¿Eliminar este insumo?')) db.collection('insumos').doc(b.dataset.delins).delete().then(()=>toast('Insumo eliminado'));
+      if(confirm('¿Eliminar este insumo?')) col('insumos').doc(b.dataset.delins).delete().then(()=>toast('Insumo eliminado'));
     }));
   }
 
@@ -1114,7 +1156,7 @@ var __rtPWA = (function() {
   document.getElementById('modalInsumoConfirm').addEventListener('click', ()=>{
     const data={nombre:document.getElementById('insNombre').value.trim(),unidad:document.getElementById('insUnidad').value,stockActual:parseFloat(document.getElementById('insStockActual').value)||0,stockMinimo:parseFloat(document.getElementById('insStockMinimo').value)||0};
     if (!data.nombre) { toast('Falta el nombre'); return; }
-    const ref=editandoInsumoId?db.collection('insumos').doc(editandoInsumoId):db.collection('insumos').doc();
+    const ref=editandoInsumoId?col('insumos').doc(editandoInsumoId):col('insumos').doc();
     ref.set(data,{merge:true}).then(()=>{ toast('Insumo guardado'); document.getElementById('modalInsumo').classList.remove('active'); }).catch(e=>logError('guardarInsumo',e));
   });
 
@@ -1130,7 +1172,7 @@ var __rtPWA = (function() {
     });
     const ids=Object.keys(desc); if (!ids.length) return;
     const batch=db.batch();
-    ids.forEach(id=>batch.update(db.collection('insumos').doc(id),{stockActual:firebase.firestore.FieldValue.increment(-desc[id])}));
+    ids.forEach(id=>batch.update(col('insumos').doc(id),{stockActual:firebase.firestore.FieldValue.increment(-desc[id])}));
     batch.commit().then(()=>{
       ids.forEach(insumoId=>{ const ins=insumos.find(i=>i.id===insumoId); if(ins&&(ins.stockActual-desc[insumoId])<=ins.stockMinimo) toast(`⚠️ Bajo stock: ${ins.nombre}`,'warn'); });
     }).catch(e=>logError('descontarStock',e));
@@ -1139,7 +1181,7 @@ var __rtPWA = (function() {
   /* ════ REPORTES ════ */
   function escucharVentasHoy() {
     const hoy=new Date().toISOString().slice(0,10);
-    db.collection('ventas').where('fechaDia','==',hoy).onSnapshot(snap=>{
+    col('ventas').where('fechaDia','==',hoy).onSnapshot(snap=>{
       const ventas=snap.docs.map(d=>d.data());
       document.getElementById('repPedidosDia').textContent=ventas.length;
       document.getElementById('repIngresosDia').textContent='$'+ventas.reduce((s,v)=>s+(v.total||0),0);
@@ -1166,7 +1208,7 @@ var __rtPWA = (function() {
     }
     let ventas=[];
     if (estaOnline) {
-      const snap=await db.collection('ventas').where('fechaDia','>=',desde).where('fechaDia','<=',hasta).get();
+      const snap=await col('ventas').where('fechaDia','>=',desde).where('fechaDia','<=',hasta).get();
       ventas=snap.docs.map(d=>d.data()).sort((a,b)=>(b.fechaDia||'').localeCompare(a.fechaDia||''));
     } else {
       const pend=await idbGetAll('ventas_pendientes');
@@ -1182,7 +1224,7 @@ var __rtPWA = (function() {
   document.getElementById('exportCSVBtn').addEventListener('click', async () => {
     let ventas=ventasHistorialActual;
     if (!ventas.length) {
-      if (estaOnline) { const snap=await db.collection('ventas').where('fechaDia','==',fechaISO(new Date())).get(); ventas=snap.docs.map(d=>d.data()); }
+      if (estaOnline) { const snap=await col('ventas').where('fechaDia','==',fechaISO(new Date())).get(); ventas=snap.docs.map(d=>d.data()); }
       else { ventas=await idbGetAll('ventas_pendientes'); }
     }
     if (!ventas.length) { toast('No hay ventas para exportar'); return; }
@@ -1208,7 +1250,7 @@ var __rtPWA = (function() {
 
   /* ════ CONFIGURACIÓN ════ */
   function cargarConfiguracion() {
-    db.collection('configuracion').doc('general').get().then(doc=>{
+    col('configuracion').doc('general').get().then(doc=>{
       const c=doc.exists?doc.data():{};
       document.getElementById('cfgNombre').value=c.nombre||'';
       document.getElementById('cfgHorario').value=c.horario||'';
@@ -1223,17 +1265,17 @@ var __rtPWA = (function() {
   }
 
   document.getElementById('guardarCfgBtn').addEventListener('click', ()=>{
-    db.collection('configuracion').doc('general').set({nombre:document.getElementById('cfgNombre').value.trim(),horario:document.getElementById('cfgHorario').value.trim()},{merge:true}).then(()=>toast('Configuración guardada'));
+    col('configuracion').doc('general').set({nombre:document.getElementById('cfgNombre').value.trim(),horario:document.getElementById('cfgHorario').value.trim()},{merge:true}).then(()=>toast('Configuración guardada'));
   });
   document.getElementById('guardarWhatsappBtn').addEventListener('click', ()=>{
     const num=document.getElementById('cfgWhatsapp').value.replace(/\D/g,'');
     if (!num||num.length<10) { toast('Número inválido. Formato: 5491112345678'); return; }
-    db.collection('configuracion').doc('general').set({whatsapp:num},{merge:true}).then(()=>{ whatsappNumero=num; toast('Número guardado'); });
+    col('configuracion').doc('general').set({whatsapp:num},{merge:true}).then(()=>{ whatsappNumero=num; toast('Número guardado'); });
   });
   document.getElementById('guardarPinCajeroBtn').addEventListener('click', ()=>{
     const pin=document.getElementById('cfgPinCajero').value.trim();
     if (!pin||pin.length<4) { toast('El PIN debe tener al menos 4 dígitos'); return; }
-    db.collection('configuracion').doc('general').set({pinCajero:pin},{merge:true}).then(()=>{ pinCajeroActual=pin; toast('PIN actualizado'); });
+    col('configuracion').doc('general').set({pinCajero:pin},{merge:true}).then(()=>{ pinCajeroActual=pin; toast('PIN actualizado'); });
   });
 
   function ejecutarLimpiarDuplicados() {
@@ -1244,14 +1286,14 @@ var __rtPWA = (function() {
     Object.values(grupos).forEach(lista=>{ if(lista.length<=1)return; gCount++; lista.sort((a,b)=>cr(b)-cr(a)); lista.slice(1).forEach(p=>aBorrar.push(p.id)); });
     if (!aBorrar.length) { toast('No se encontraron duplicados'); return; }
     if (!confirm(`Se van a eliminar ${aBorrar.length} productos duplicados (${gCount} grupos). ¿Continuar?`)) return;
-    const batch=db.batch(); aBorrar.forEach(id=>batch.delete(db.collection('productos').doc(id)));
+    const batch=db.batch(); aBorrar.forEach(id=>batch.delete(col('productos').doc(id)));
     batch.commit().then(()=>toast(`${aBorrar.length} duplicados eliminados`));
   }
 
   function ejecutarRestablecerCatalogo() {
     if (!confirm('Esto va a BORRAR todos los productos actuales. ¿Seguro?')) return;
     if (!confirm('Confirmá: se borran todos y se carga el catálogo de ejemplo. ¿Continuar?')) return;
-    db.collection('productos').get().then(snap=>{ const b=db.batch(); snap.docs.forEach(doc=>b.delete(doc.ref)); return b.commit(); }).then(()=>{ precargarMenuEjemplo(); toast('Catálogo restablecido'); });
+    col('productos').get().then(snap=>{ const b=db.batch(); snap.docs.forEach(doc=>b.delete(doc.ref)); return b.commit(); }).then(()=>{ precargarMenuEjemplo(); toast('Catálogo restablecido'); });
   }
 
   document.getElementById('limpiarDuplicadosBtn').addEventListener('click', ejecutarLimpiarDuplicados);
@@ -1273,16 +1315,15 @@ var __rtPWA = (function() {
   }
   async function cargarPractica() {
     if (!confirm('Se carga una panadería de práctica: catálogo (si no tenés productos), ventas de 14 días y gastos de mentira. Se pueden quitar después. ¿Seguir?')) return;
-    if (!confirm('ATENCIÓN: esta app guarda todos los datos en un mismo lugar. Si hay otros clientes reales usando este mismo sistema, también van a ver los datos de práctica. Usalo solo en tu cuenta de pruebas. ¿Seguro?')) return;
     try {
-      const ya = await db.collection('ventas').where('_demo', '==', true).limit(1).get();
+      const ya = await col('ventas').where('_demo', '==', true).limit(1).get();
       if (!ya.empty) { toast('Ya hay una práctica cargada. Quitala primero.'); return; }
       toast('Cargando práctica…');
       const ops = [], f = 5500/2800;
       const lista = precargarMenuEjemplo({ factor: f, devolver: true });
       let base = productos.length ? productos : null;
       if (!base) {
-        base = lista.map(p => { const r = db.collection('productos').doc(); ops.push([r, Object.assign({}, p, { _demo: true })]); return Object.assign({ id: r.id }, p); });
+        base = lista.map(p => { const r = col('productos').doc(); ops.push([r, Object.assign({}, p, { _demo: true })]); return Object.assign({ id: r.id }, p); });
       }
       const hoy = new Date();
       for (let d = 0; d < 14; d++) {
@@ -1296,12 +1337,12 @@ var __rtPWA = (function() {
           }
           const total = items.reduce((s, it) => s + it.precio * it.cantidad, 0), r = Math.random();
           const f2 = new Date(dia); f2.setHours(_rnd(9, 22), _rnd(0, 59), _rnd(0, 59));
-          ops.push([db.collection('ventas').doc(), { items, total, metodoPago: r < 0.5 ? 'efectivo' : (r < 0.8 ? 'transferencia' : 'debito'), fecha: f2.toISOString(), fechaDia: f2.toISOString().slice(0, 10), ts: firebase.firestore.Timestamp.fromDate(f2), _demo: true }]);
+          ops.push([col('ventas').doc(), { items, total, metodoPago: r < 0.5 ? 'efectivo' : (r < 0.8 ? 'transferencia' : 'debito'), fecha: f2.toISOString(), fechaDia: f2.toISOString().slice(0, 10), ts: firebase.firestore.Timestamp.fromDate(f2), _demo: true }]);
         }
       }
       [['Harina 50 kg x4',120000,0],['Manteca y materias primas',90000,1],['Gas',40000,2],['Luz',70000,4]].forEach(function (g) {
         const f3 = new Date(hoy); f3.setDate(hoy.getDate() - g[2]);
-        ops.push([db.collection('gastos').doc(), { desc: g[0], monto: g[1], fechaDia: f3.toISOString().slice(0, 10), ts: firebase.firestore.Timestamp.fromDate(f3), _demo: true }]);
+        ops.push([col('gastos').doc(), { desc: g[0], monto: g[1], fechaDia: f3.toISOString().slice(0, 10), ts: firebase.firestore.Timestamp.fromDate(f3), _demo: true }]);
       });
       await _commitOps(ops);
       toast('✅ Práctica cargada: mirá Reportes e Historial');
@@ -1313,7 +1354,7 @@ var __rtPWA = (function() {
       toast('Quitando práctica…');
       const ops = [];
       for (const c of ['ventas', 'gastos', 'productos']) {
-        const s = await db.collection(c).where('_demo', '==', true).get();
+        const s = await col(c).where('_demo', '==', true).get();
         s.forEach(d => ops.push([d.ref, null]));
       }
       await _commitOps(ops);
@@ -1340,7 +1381,7 @@ var __rtPWA = (function() {
   /* ════ GASTOS ════ */
   function cargarGastosDelTurno() {
     const hoy=new Date().toISOString().slice(0,10);
-    db.collection('gastos').where('fechaDia','==',hoy).onSnapshot(snap=>{
+    col('gastos').where('fechaDia','==',hoy).onSnapshot(snap=>{
       gastosDelTurno=snap.docs.map(d=>({id:d.id,...d.data()}));
       renderGastosBox();
     });
@@ -1363,7 +1404,7 @@ var __rtPWA = (function() {
     const monto=parseFloat(document.getElementById('gastoMonto').value)||0;
     if (!desc) { toast('Ingresá una descripción'); return; }
     if (monto<=0) { toast('Ingresá un monto válido'); return; }
-    db.collection('gastos').add({ desc, monto, fechaDia:new Date().toISOString().slice(0,10), ts:firebase.firestore.FieldValue.serverTimestamp() }).then(()=>{ toast('Gasto registrado'); document.getElementById('modalGasto').classList.remove('active'); }).catch(e=>logError('gasto',e));
+    col('gastos').add({ desc, monto, fechaDia:new Date().toISOString().slice(0,10), ts:firebase.firestore.FieldValue.serverTimestamp() }).then(()=>{ toast('Gasto registrado'); document.getElementById('modalGasto').classList.remove('active'); }).catch(e=>logError('gasto',e));
   });
 
   /* ════ CIERRE DE CAJA ════ */
@@ -1390,7 +1431,7 @@ var __rtPWA = (function() {
     const hoy=new Date().toISOString().slice(0,10);
     let ventas=[];
     if (estaOnline) {
-      const snap=await db.collection('ventas').where('fechaDia','==',hoy).get().catch(e=>{ logError('cierre-query',e); return {docs:[]}; });
+      const snap=await col('ventas').where('fechaDia','==',hoy).get().catch(e=>{ logError('cierre-query',e); return {docs:[]}; });
       ventas=snap.docs.map(d=>d.data());
     } else {
       const pend=await idbGetAll('ventas_pendientes');
@@ -1425,7 +1466,7 @@ var __rtPWA = (function() {
     };
 
     if (estaOnline) {
-      await db.collection('cierres').add({...cierreData,ts:firebase.firestore.FieldValue.serverTimestamp()}).catch(e=>logError('cierre',e));
+      await col('cierres').add({...cierreData,ts:firebase.firestore.FieldValue.serverTimestamp()}).catch(e=>logError('cierre',e));
     } else {
       await idbAdd('cierres_pendientes', cierreData);
       await actualizarBadge();
@@ -1491,7 +1532,7 @@ var __rtPWA = (function() {
   document.getElementById('modalFeaturesCancel').addEventListener('click', ()=>document.getElementById('modalFeatures').classList.remove('active'));
   document.getElementById('modalFeaturesGuardar').addEventListener('click', ()=>{
     const nuevas={ stockHabilitado:document.getElementById('flagStock').checked, recetasHabilitado:document.getElementById('flagRecetas').checked, gastosHabilitado:document.getElementById('flagGastos').checked };
-    db.collection('configuracion').doc('general').set({features:nuevas},{merge:true}).then(()=>{
+    col('configuracion').doc('general').set({features:nuevas},{merge:true}).then(()=>{
       featuresActuales=nuevas; renderPlusStatus(); toast('Features actualizadas'); document.getElementById('modalFeatures').classList.remove('active');
     });
   });
@@ -1507,11 +1548,11 @@ async function generarBackup(silencioso) {
   var uid = auth.currentUser ? auth.currentUser.uid : null;
   if (!uid) return;
   try {
-    var ventasSnap = await db.collection('ventas').get().catch(function(){return {docs:[]};});
-    var productosSnap = await db.collection('productos').get().catch(function(){return {docs:[]};});
-    var insumosSnap = await db.collection('insumos').get().catch(function(){return {docs:[]};});
-    var cierresSnap = await db.collection('cierres').get().catch(function(){return {docs:[]};});
-    var configSnap = await db.collection('configuracion').doc('general').get().catch(function(){return {exists:false};});
+    var ventasSnap = await col('ventas').get().catch(function(){return {docs:[]};});
+    var productosSnap = await col('productos').get().catch(function(){return {docs:[]};});
+    var insumosSnap = await col('insumos').get().catch(function(){return {docs:[]};});
+    var cierresSnap = await col('cierres').get().catch(function(){return {docs:[]};});
+    var configSnap = await col('configuracion').doc('general').get().catch(function(){return {exists:false};});
     var fecha = new Date().toISOString().slice(0,10);
     var backup = {
       app:'PanAR', version:'1.4', fecha:new Date().toISOString(), uid:uid,
@@ -1542,11 +1583,11 @@ async function restaurarBackup(input) {
     if (backup.app !== 'PanAR') { toast('El archivo no es un backup de PanAR'); return; }
     toast('Restaurando datos...');
     var batch = db.batch(); var count = 0;
-    (backup.ventas||[]).forEach(function(v){var id=v._id;var d=Object.assign({},v);delete d._id;batch.set(db.collection('ventas').doc(id),d);if(++count%400===0){batch.commit();batch=db.batch();}});
-    (backup.productos||[]).forEach(function(v){var id=v._id;var d=Object.assign({},v);delete d._id;batch.set(db.collection('productos').doc(id),d);});
-    (backup.insumos||[]).forEach(function(v){var id=v._id;var d=Object.assign({},v);delete d._id;batch.set(db.collection('insumos').doc(id),d);});
-    (backup.cierres||[]).forEach(function(v){var id=v._id;var d=Object.assign({},v);delete d._id;batch.set(db.collection('cierres').doc(id),d);});
-    if(backup.configuracion&&Object.keys(backup.configuracion).length>0){batch.set(db.collection('configuracion').doc('general'),backup.configuracion,{merge:true});}
+    (backup.ventas||[]).forEach(function(v){var id=v._id;var d=Object.assign({},v);delete d._id;batch.set(col('ventas').doc(id),d);if(++count%400===0){batch.commit();batch=db.batch();}});
+    (backup.productos||[]).forEach(function(v){var id=v._id;var d=Object.assign({},v);delete d._id;batch.set(col('productos').doc(id),d);});
+    (backup.insumos||[]).forEach(function(v){var id=v._id;var d=Object.assign({},v);delete d._id;batch.set(col('insumos').doc(id),d);});
+    (backup.cierres||[]).forEach(function(v){var id=v._id;var d=Object.assign({},v);delete d._id;batch.set(col('cierres').doc(id),d);});
+    if(backup.configuracion&&Object.keys(backup.configuracion).length>0){batch.set(col('configuracion').doc('general'),backup.configuracion,{merge:true});}
     await batch.commit();
     toast('✅ Backup restaurado'); input.value='';
     setTimeout(function(){location.reload();},1500);

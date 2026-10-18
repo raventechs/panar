@@ -1,0 +1,36 @@
+rules_version = '2';
+// Publicar en Firebase Console → Firestore Database → Reglas.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function esDueno(owner) { return request.auth != null && request.auth.uid == owner; }
+    function esCajero(owner) {
+      return request.auth != null
+        && request.auth.token.firebase.sign_in_provider == 'anonymous'
+        && exists(/databases/$(database)/documents/negocios/$(owner)/cajeros/$(request.auth.uid));
+    }
+
+    // Membresía de cajero: se crea sólo si el PIN coincide con el que fijó el dueño.
+    match /negocios/{owner}/cajeros/{cid} {
+      allow read: if esDueno(owner) || (request.auth != null && request.auth.uid == cid);
+      allow create: if request.auth != null
+        && request.auth.uid == cid
+        && request.auth.token.firebase.sign_in_provider == 'anonymous'
+        && request.resource.data.pin == get(/databases/$(database)/documents/negocios/$(owner)/configuracion/general).data.pinCajero;
+      allow delete: if esDueno(owner);
+    }
+
+    // Datos del negocio: el dueño todo; el cajero (con membresía) opera caja.
+    match /negocios/{owner}/{col}/{doc=**} {
+      allow read, write: if esDueno(owner)
+        || (col in ['ventas','productos','insumos','gastos','cierres','comandas'] && esCajero(owner));
+      allow read: if col == 'configuracion' && esCajero(owner);
+    }
+
+    // Registro de errores (sólo escritura)
+    match /errores/{id} { allow create: if request.auth != null; }
+
+    // Datos anteriores en la raíz: cerrados (migrar antes de publicar estas reglas)
+    match /{path=**} { allow read, write: if false; }
+  }
+}
