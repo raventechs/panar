@@ -1273,6 +1273,7 @@ var __rtPWA = (function() {
   }
   async function cargarPractica() {
     if (!confirm('Se carga una panadería de práctica: catálogo (si no tenés productos), ventas de 14 días y gastos de mentira. Se pueden quitar después. ¿Seguir?')) return;
+    if (!confirm('ATENCIÓN: esta app guarda todos los datos en un mismo lugar. Si hay otros clientes reales usando este mismo sistema, también van a ver los datos de práctica. Usalo solo en tu cuenta de pruebas. ¿Seguro?')) return;
     try {
       const ya = await db.collection('ventas').where('_demo', '==', true).limit(1).get();
       if (!ya.empty) { toast('Ya hay una práctica cargada. Quitala primero.'); return; }
