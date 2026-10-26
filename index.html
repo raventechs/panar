@@ -1,7 +1,10 @@
 <!DOCTYPE html>
 <!--
   ════════════════════════════════════════════════════════════
-  PANAR — CAJA REGISTRADORA PARA PANADERÍAS — v1.6
+  PANAR — CAJA REGISTRADORA PARA PANADERÍAS — v1.7
+  v1.7: BACKUP ARREGLADO: el automático diario no guardaba nada (ahora baja el archivo y deja copia local de los últimos 7 días);
+  incluye gastos, restaura las fechas a su tipo y no pisa el plan contratado. Fecha: 2026-10-26
+  v1.7 también: se corrigió un error que cortaba el script al cargar (faltaba el botón de la vista Stock) y dejaba sin funcionar cierre de caja, gastos, modo práctica y service worker.
   v1.6: DATOS SEPARADOS POR NEGOCIO (negocios/{uid}/…). El cajero entra con el link del dueño (Configuración → Acceso Punto de Venta) + PIN, validado por reglas de Firestore. Requiere publicar firestore.rules.
   Fecha: 2026-10-17
   v1.5: MODO PRÁCTICA (Configuración → 🎓): carga catálogo con precios actuales (pan francés ≈ $5.500 el kilo), 14 días de ventas y gastos marcados _demo; botón para quitarlos sin tocar datos reales.
@@ -402,7 +405,7 @@ var __rtPWA = (function() {
     <section class="view" id="view-configuracion">
 <div class="config-section">
         <h4>💾 Backup de datos</h4>
-        <p style="font-size:0.78rem;color:var(--muted);margin-bottom:10px;">Se genera automáticamente una vez por día. Guardá el archivo en un lugar seguro.</p>
+        <p style="font-size:0.78rem;color:var(--muted);margin-bottom:10px;">Una copia de tus ventas, gastos, productos, insumos y cierres. Se baja sola una vez por día al entrar; también podés bajarla cuando quieras o restaurar una anterior. Guardá el archivo en un lugar seguro.</p>
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
           <button class="btn-secondary" style="width:auto;padding:9px 14px;font-size:0.82rem;" onclick="generarBackup(false)">📥 Descargar backup</button>
           <button class="btn-secondary" style="width:auto;padding:9px 14px;font-size:0.82rem;" onclick="document.getElementById('inputRestaurar').click()">📤 Restaurar</button>
@@ -1140,7 +1143,8 @@ var __rtPWA = (function() {
     }));
   }
 
-  document.getElementById('nuevoInsumoBtn').addEventListener('click', () => abrirModalInsumo(null));
+  /* v1.7: la vista Stock no existe en esta versión; sin este control el script se cortaba acá y quedaban sin funcionar el cierre de caja, gastos, modo práctica y el service worker */
+  (document.getElementById('nuevoInsumoBtn')||{addEventListener(){}}).addEventListener('click', () => abrirModalInsumo(null));
 
   function abrirModalInsumo(id) {
     editandoInsumoId=id;
@@ -1543,63 +1547,125 @@ var __rtPWA = (function() {
   }
   chequearBackupDiario();
 
-// ══════════ BACKUP ESTÁNDAR PanAR ══════════
-async function generarBackup(silencioso) {
-  var uid = auth.currentUser ? auth.currentUser.uid : null;
-  if (!uid) return;
-  try {
-    var ventasSnap = await col('ventas').get().catch(function(){return {docs:[]};});
-    var productosSnap = await col('productos').get().catch(function(){return {docs:[]};});
-    var insumosSnap = await col('insumos').get().catch(function(){return {docs:[]};});
-    var cierresSnap = await col('cierres').get().catch(function(){return {docs:[]};});
-    var configSnap = await col('configuracion').doc('general').get().catch(function(){return {exists:false};});
-    var fecha = new Date().toISOString().slice(0,10);
-    var backup = {
-      app:'PanAR', version:'1.4', fecha:new Date().toISOString(), uid:uid,
-      ventas: ventasSnap.docs.map(function(d){return Object.assign({_id:d.id},d.data());}),
-      productos: productosSnap.docs.map(function(d){return Object.assign({_id:d.id},d.data());}),
-      insumos: insumosSnap.docs.map(function(d){return Object.assign({_id:d.id},d.data());}),
-      cierres: cierresSnap.docs.map(function(d){return Object.assign({_id:d.id},d.data());}),
-      configuracion: configSnap.exists ? configSnap.data() : {}
-    };
-    var json = JSON.stringify(backup, null, 2);
-    localStorage.setItem('panar-ultimo-backup', fecha);
-    var el = document.getElementById('ultimoBackupFecha'); if (el) el.textContent = fecha;
-    if (!silencioso) {
-      var blob = new Blob([json], {type:'application/json'});
-      var url = URL.createObjectURL(blob);
-      var a = document.createElement('a'); a.href=url; a.download='panar-backup-'+fecha+'.json'; a.click();
-      URL.revokeObjectURL(url); toast('✅ Backup descargado');
-    }
-  } catch(e) { console.error('Error backup:',e); if(!silencioso) toast('Error al generar backup'); }
+// ══════════ BACKUP ESTÁNDAR 1.7 ══════════
+// Automático: una vez por día al entrar (solo el dueño). Baja el archivo JSON al dispositivo y deja una copia
+// en IndexedDB (las últimas 7). Manual y restaurar: Configuración → 💾 Backup de datos.
+// Las fechas de Firestore (Timestamp) se guardan con una marca reversible para volver a ser fechas al restaurar.
+// Ventas cargadas sin conexión que aún no se sincronizaron NO están en el backup (se suman al sincronizar).
+function _bkCfg() { return { app: 'PanAR', ls: 'panar-ultimo-backup', cols: ['ventas', 'productos', 'insumos', 'cierres', 'gastos', 'configuracion'], ver: '1.7' }; }
+function _bkHoy() {
+  const d = new Date();
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
 }
-
-async function restaurarBackup(input) {
-  var file = input.files[0]; if (!file) return;
-  if (!auth.currentUser) { toast('Iniciá sesión primero'); return; }
-  if (!confirm('Esto va a REEMPLAZAR todos tus datos con los del backup. ¿Continuar?')) { input.value=''; return; }
-  try {
-    var text = await file.text(); var backup = JSON.parse(text);
-    if (backup.app !== 'PanAR') { toast('El archivo no es un backup de PanAR'); return; }
-    toast('Restaurando datos...');
-    var batch = db.batch(); var count = 0;
-    (backup.ventas||[]).forEach(function(v){var id=v._id;var d=Object.assign({},v);delete d._id;batch.set(col('ventas').doc(id),d);if(++count%400===0){batch.commit();batch=db.batch();}});
-    (backup.productos||[]).forEach(function(v){var id=v._id;var d=Object.assign({},v);delete d._id;batch.set(col('productos').doc(id),d);});
-    (backup.insumos||[]).forEach(function(v){var id=v._id;var d=Object.assign({},v);delete d._id;batch.set(col('insumos').doc(id),d);});
-    (backup.cierres||[]).forEach(function(v){var id=v._id;var d=Object.assign({},v);delete d._id;batch.set(col('cierres').doc(id),d);});
-    if(backup.configuracion&&Object.keys(backup.configuracion).length>0){batch.set(col('configuracion').doc('general'),backup.configuracion,{merge:true});}
+function _bkSer(v) {
+  if (v && typeof v === 'object') {
+    if (typeof v.toMillis === 'function' && 'seconds' in v && 'nanoseconds' in v) return { __ts: [v.seconds, v.nanoseconds] };
+    if (Array.isArray(v)) return v.map(_bkSer);
+    const o = {}; Object.keys(v).forEach(k => { o[k] = _bkSer(v[k]); }); return o;
+  }
+  return v;
+}
+function _bkRev(v) {
+  if (v && typeof v === 'object') {
+    if (Array.isArray(v)) return v.map(_bkRev);
+    if (Array.isArray(v.__ts) && v.__ts.length === 2) return new firebase.firestore.Timestamp(v.__ts[0], v.__ts[1]);
+    const o = {}; Object.keys(v).forEach(k => { o[k] = _bkRev(v[k]); }); return o;
+  }
+  return v;
+}
+async function _bkLeer(ref) {
+  const s = await ref.get();
+  return s.docs.map(d => Object.assign({ _id: d.id }, _bkSer(d.data())));
+}
+function _bkIdb(fecha, json) {
+  return new Promise(function (res) {
+    try {
+      const rq = indexedDB.open('panar-backup', 1);
+      rq.onupgradeneeded = function () { rq.result.createObjectStore('b', { keyPath: 'fecha' }); };
+      rq.onsuccess = function () {
+        const idb = rq.result, tx = idb.transaction('b', 'readwrite'), st = tx.objectStore('b');
+        st.put({ fecha: fecha, json: json });
+        st.getAllKeys().onsuccess = function (e) { const ks = e.target.result.sort(); while (ks.length > 7) st.delete(ks.shift()); };
+        tx.oncomplete = function () { idb.close(); res(true); };
+        tx.onerror = tx.onabort = function () { idb.close(); res(false); };
+      };
+      rq.onerror = function () { res(false); };
+    } catch (e) { res(false); }
+  });
+}
+function _bkDescargar(json, fecha) {
+  const blob = new Blob([json], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'panar-backup-' + fecha + '.json';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
+}
+async function _bkCommit(ops) {
+  for (let i = 0; i < ops.length; i += 400) {
+    const batch = db.batch();
+    ops.slice(i, i + 400).forEach(function (o) { if (o[2]) batch.set(o[0], o[1], { merge: true }); else batch.set(o[0], o[1]); });
     await batch.commit();
-    toast('✅ Backup restaurado'); input.value='';
-    setTimeout(function(){location.reload();},1500);
-  } catch(e) { toast('Error al restaurar: '+e.message); input.value=''; }
+  }
 }
-
+async function generarBackup(silencioso) {
+  const C = _bkCfg();
+  if (rolActual !== 'dueño') { if (!silencioso) toast('Solo el dueño puede hacer el backup'); return; }
+  const uid = auth.currentUser ? auth.currentUser.uid : null; if (!uid) return;
+  try {
+    if (!silencioso) toast('Preparando backup…');
+    const datos = {};
+    for (const n of C.cols) datos[n] = await _bkLeer(col(n));
+    const fecha = _bkHoy();
+    const backup = { app: C.app, version: C.ver, fecha: new Date().toISOString(), uid: uid, datos: datos };
+    const json = JSON.stringify(backup);
+    _bkDescargar(json, fecha);
+    await _bkIdb(fecha, json);
+    try { localStorage.setItem(C.ls, fecha); } catch (e) {}
+    const el = document.getElementById('ultimoBackupFecha'); if (el) el.textContent = fecha;
+    if (!silencioso) toast('✅ Backup descargado');
+  } catch (e) { logError('generarBackup', e.message); if (!silencioso) toast('Error al generar backup: ' + e.message); }
+}
+async function restaurarBackup(input) {
+  const C = _bkCfg();
+  const file = input.files && input.files[0];
+  if (!file) return;
+  try {
+    if (rolActual !== 'dueño') { toast('Solo el dueño puede restaurar'); return; }
+    const bk = JSON.parse(await file.text());
+    if (bk.app !== C.app || !bk.datos) { toast('El archivo no es un backup de ' + C.app); return; }
+    let total = 0; Object.keys(bk.datos).forEach(function (k) { total += (bk.datos[k] || []).length; });
+    if (!confirm('Se van a volver a cargar ' + total + ' registros en tu cuenta. Los que ya existen se reemplazan por los del archivo; el resto queda como está. ¿Continuar?')) return;
+    toast('Restaurando…');
+    const ops = [];
+    C.cols.forEach(function (n) {
+      (bk.datos[n] || []).forEach(function (d) {
+        const r = Object.assign({}, d), id = r._id; delete r._id; if (!id) return;
+        if (n === 'configuracion') { delete r.features; ops.push([col(n).doc(id), _bkRev(r), true]); }   // el plan contratado nunca se pisa desde un archivo
+        else ops.push([col(n).doc(id), _bkRev(r)]);
+      });
+    });
+    await _bkCommit(ops);
+    toast('✅ Backup restaurado (' + ops.length + ' registros)');
+    setTimeout(function () { location.reload(); }, 1500);
+  } catch (e) { logError('restaurarBackup', e.message); toast('Error al restaurar: ' + e.message); }
+  finally { input.value = ''; }
+}
+// Se llama al cargar la página, cuando todavía no hay sesión: espera (hasta ~10 min) a que entre el dueño y recién ahí decide.
 function chequearBackupDiario() {
-  var hoy = new Date().toISOString().slice(0,10);
-  var ultimo = localStorage.getItem('panar-ultimo-backup');
-  var el = document.getElementById('ultimoBackupFecha'); if (el && ultimo) el.textContent = ultimo;
-  if (ultimo !== hoy) { setTimeout(function(){generarBackup(true);},5000); }
+  const C = _bkCfg();
+  let intentos = 0;
+  const t = setInterval(function () {
+    intentos++;
+    if (rolActual === 'dueño') {
+      clearInterval(t);
+      let ultimo = null; try { ultimo = localStorage.getItem(C.ls); } catch (e) {}
+      const el = document.getElementById('ultimoBackupFecha'); if (el && ultimo) el.textContent = ultimo;
+      if (ultimo !== _bkHoy()) setTimeout(function () { generarBackup(true); }, 5000);
+    } else if (rolActual === 'cajero' || intentos > 200) clearInterval(t);
+  }, 3000);
 }
+// ══════════ FIN BACKUP ══════════
 
 </script>
 </body>
