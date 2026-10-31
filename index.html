@@ -2,6 +2,7 @@
 <!--
   ════════════════════════════════════════════════════════════
   PANAR — CAJA REGISTRADORA PARA PANADERÍAS — v1.7
+  PIN6+REGISTRO: PIN de cajero de 6 números (los existentes siguen válidos), bloqueo 10 min tras 5 intentos y registro usuarios/{uid} para el panel. Requiere publicar firestore.rules.
   v1.7: BACKUP ARREGLADO: el automático diario no guardaba nada (ahora baja el archivo y deja copia local de los últimos 7 días);
   incluye gastos, restaura las fechas a su tipo y no pisa el plan contratado. Fecha: 2026-10-26
   v1.7 también: se corrigió un error que cortaba el script al cargar (faltaba el botón de la vista Stock) y dejaba sin funcionar cierre de caja, gastos, modo práctica y service worker.
@@ -534,7 +535,7 @@ var __rtPWA = (function() {
       <div class="config-section">
         <h4>Acceso Punto de Venta</h4>
         <p style="font-size:0.78rem;color:var(--muted);margin-bottom:8px;">PIN para que tu cajero entre solo a Caja.</p>
-        <input type="text" id="cfgPinCajero" inputmode="numeric" maxlength="6" placeholder="Ej: 2468">
+        <input type="text" id="cfgPinCajero" inputmode="numeric" maxlength="6" placeholder="6 números">
         <button class="btn-tomate" style="margin-top:10px;" id="guardarPinCajeroBtn">Guardar PIN</button>
         <div style="margin-top:14px;">
           <p style="font-size:0.78rem;color:var(--muted);margin-bottom:6px;">Link de acceso del cajero: abrilo una vez en el celular/PC del cajero, después entra con el PIN.</p>
@@ -680,26 +681,36 @@ var __rtPWA = (function() {
   let OWNER = null;
   function col(n){ if(!OWNER) throw new Error('Sin negocio activo'); return db.collection('negocios').doc(OWNER).collection(n); }
   try{ const q=new URLSearchParams(location.search).get('n'); if(q && /^[A-Za-z0-9]{10,40}$/.test(q)) localStorage.setItem('rt_negocio',q); }catch(_){}
+  /* PIN de cajero: 6 números al azar para negocios nuevos (los PIN existentes no se tocan) */
+  function rtPin6(){ try{ var a=new Uint32Array(1); crypto.getRandomValues(a); return String(100000+(a[0]%900000)); }catch(e){ return String(100000+Math.floor(Math.random()*900000)); } }
   async function resolverNegocio(user){
     try{
       if(!user.isAnonymous){
         OWNER = user.uid;
         const r = col('configuracion').doc('general');
         const s = await r.get();
-        if(!s.exists || !s.data().pinCajero){ await r.set({pinCajero:String(1000+Math.floor(Math.random()*9000))},{merge:true}); }
+        if(!s.exists || !s.data().pinCajero){ await r.set({pinCajero:rtPin6()},{merge:true}); }
         const el=document.getElementById('cfgLinkCajero'); if(el) el.value = location.origin+location.pathname+'?n='+OWNER;
+        /* Registro de usuarios para el panel (usuarios/{uid}); si las reglas todavía no lo permiten, se ignora */
+        try{ db.collection('usuarios').doc(user.uid).set({email:user.email||'',nombre:user.displayName||'',alta:(user.metadata&&user.metadata.creationTime)||'',ultimoAcceso:firebase.firestore.FieldValue.serverTimestamp(),app:'PanAR'},{merge:true}).catch(function(){}); }catch(_){}
         return true;
       }
       let n=null; try{ n=localStorage.getItem('rt_negocio'); }catch(_){}
       if(!n) throw new Error('sin negocio');
       OWNER = n;
       const ref = db.collection('negocios').doc(n).collection('cajeros').doc(user.uid);
-      if(window._pinPend){ const p=window._pinPend; window._pinPend=null; await ref.set({pin:p, ts:firebase.firestore.FieldValue.serverTimestamp()}); return true; }
+      if(window._pinPend){
+        const p=window._pinPend; window._pinPend=null;
+        let lk=0; try{ lk=parseInt(localStorage.getItem('rt_pin_lock')||'0',10); }catch(_){}
+        if(Date.now()<lk){ const eb=new Error('bloqueado'); eb.bloqueado=true; throw eb; }
+        try{ await ref.set({pin:p, ts:firebase.firestore.FieldValue.serverTimestamp()}); try{ localStorage.removeItem('rt_pin_fail'); }catch(_){} return true; }
+        catch(err){ try{ let f=parseInt(localStorage.getItem('rt_pin_fail')||'0',10)+1; if(f>=5){ localStorage.setItem('rt_pin_lock',String(Date.now()+10*60000)); f=0; } localStorage.setItem('rt_pin_fail',String(f)); }catch(_){} throw err; }
+      }
       const s2 = await ref.get(); if(!s2.exists) throw new Error('sin permiso');
       return true;
     }catch(e){
       OWNER = null;
-      const msg = user.isAnonymous ? 'PIN incorrecto o link de cajero inválido' : 'No se pudo abrir tu negocio: '+e.message;
+      const msg = (e&&e.bloqueado) ? 'Demasiados intentos. Probá de nuevo en 10 minutos.' : user.isAnonymous ? 'PIN incorrecto o link de cajero inválido' : 'No se pudo abrir tu negocio: '+e.message;
       try{ document.getElementById('loginError').textContent = msg; }catch(_){}
       try{ await auth.signOut(); }catch(_){}
       return false;
@@ -1358,7 +1369,7 @@ var __rtPWA = (function() {
       const c=doc.exists?doc.data():{};
       document.getElementById('cfgNombre').value=c.nombre||'';
       document.getElementById('cfgHorario').value=c.horario||'';
-      document.getElementById('cfgPinCajero').value=c.pinCajero||'2468';
+      document.getElementById('cfgPinCajero').value=c.pinCajero||'2468';try{document.getElementById('cfgPinCajero').placeholder=(c.pinCajero&&String(c.pinCajero).length<6)?'Cambialo a 6 números (más seguro)':'6 números';}catch(_){}
       document.getElementById('cfgWhatsapp').value=c.whatsapp||'';
       pinCajeroActual=c.pinCajero||'2468';
       whatsappNumero=c.whatsapp||'';
@@ -1378,7 +1389,7 @@ var __rtPWA = (function() {
   });
   document.getElementById('guardarPinCajeroBtn').addEventListener('click', ()=>{
     const pin=document.getElementById('cfgPinCajero').value.trim();
-    if (!pin||pin.length<4) { toast('El PIN debe tener al menos 4 dígitos'); return; }
+    if(!/^\d{6}$/.test(pin)){ toast('El PIN debe tener 6 números'); return; }
     col('configuracion').doc('general').set({pinCajero:pin},{merge:true}).then(()=>{ pinCajeroActual=pin; toast('PIN actualizado'); });
   });
 
