@@ -688,6 +688,22 @@ var __rtPWA = (function() {
   try{ const q=new URLSearchParams(location.search).get('n'); if(q && /^[A-Za-z0-9]{10,40}$/.test(q)) localStorage.setItem('rt_negocio',q); }catch(_){}
   /* PIN de cajero: 6 números al azar para negocios nuevos (los PIN existentes no se tocan) */
   function rtPin6(){ try{ var a=new Uint32Array(1); crypto.getRandomValues(a); return String(100000+(a[0]%900000)); }catch(e){ return String(100000+Math.floor(Math.random()*900000)); } }
+  /* ══ PRUEBA GRATIS 14 DÍAS: cartel y pantalla de bloqueo ══ */
+  function rtDemoCartel(dias){
+    if(document.getElementById('rtDemoCartel')) return;
+    var urgente=dias<=3, b=document.createElement('a');
+    b.id='rtDemoCartel'; b.href='https://wa.me/5491136547592?text='+encodeURIComponent('Hola RavenTechs, quiero activar mi cuenta de PanAR'); b.target='_blank';
+    b.textContent='🎓 Prueba gratis: '+(dias===1?'te queda 1 día':'te quedan '+dias+' días')+' · Activar mi cuenta';
+    b.style.cssText='position:fixed;top:calc(env(safe-area-inset-top,0px) + 6px);left:50%;transform:translateX(-50%);z-index:9000;padding:5px 14px;border-radius:99px;font:600 12px system-ui,sans-serif;text-decoration:none;white-space:nowrap;color:#fff;background:'+(urgente?'#dc2626':'#1d4ed8')+';box-shadow:0 2px 8px rgba(0,0,0,.25);'+(urgente?'animation:rtDemoBlink 1.2s ease-in-out infinite;':'');
+    var st=document.createElement('style'); st.textContent='@keyframes rtDemoBlink{50%{opacity:.55}}'; document.head.appendChild(st); document.body.appendChild(b);
+  }
+  function rtDemoVencida(){
+    if(document.getElementById('rtDemoLock')) return;
+    var d=document.createElement('div'); d.id='rtDemoLock';
+    d.style.cssText='position:fixed;inset:0;z-index:99999;display:flex;align-items:center;justify-content:center;flex-direction:column;padding:24px;text-align:center;font-family:system-ui,sans-serif;background:#0b0d12;color:#eef0f6;';
+    d.innerHTML='<div style="font-size:56px;margin-bottom:12px">🔒</div><h2 style="margin-bottom:12px;">Terminó tu prueba gratis</h2><p style="color:#9aa;margin-bottom:20px;max-width:320px;line-height:1.6">Tus 14 días de prueba terminaron. Tus datos están guardados y no se perdió nada. Activá tu cuenta para seguir usando PanAR.</p><a href="https://wa.me/5491136547592?text='+encodeURIComponent('Hola RavenTechs, quiero activar mi cuenta de PanAR')+'" target="_blank" style="background:#25D366;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:700;margin-bottom:12px;">Activar mi cuenta por WhatsApp</a><button id="rtDemoOut" style="background:none;border:1px solid #556;border-radius:8px;padding:10px 18px;color:#9aa;cursor:pointer;">Cerrar sesión</button>';
+    document.body.appendChild(d); document.getElementById('rtDemoOut').onclick=function(){ try{ auth.signOut().then(function(){ location.reload(); }); }catch(_){ location.reload(); } };
+  }
   async function resolverNegocio(user){
     try{
       if(!user.isAnonymous){
@@ -698,6 +714,16 @@ var __rtPWA = (function() {
         const el=document.getElementById('cfgLinkCajero'); if(el) el.value = location.origin+location.pathname+'?n='+OWNER;
         /* Registro de usuarios para el panel (usuarios/{uid}); si las reglas todavía no lo permiten, se ignora */
         try{ db.collection('usuarios').doc(user.uid).set({email:user.email||'',nombre:user.displayName||'',alta:(user.metadata&&user.metadata.creationTime)||'',ultimoAcceso:firebase.firestore.FieldValue.serverTimestamp(),app:'PanAR'},{merge:true}).catch(function(){}); }catch(_){}
+        /* Prueba gratis de 14 días: demoHasta = fin; null = cliente real (lo pasa el admin en Firebase); sin campo = cuenta anterior, la prueba arranca hoy */
+        try{
+          if(!(window.rtIsAdmin&&window.rtIsAdmin())){
+            const ru=db.collection('usuarios').doc(user.uid), rs=await ru.get(), rd=rs.exists?rs.data():{};
+            let dm=(rd.demoHasta===undefined)?undefined:(rd.demoHasta===null?null:(rd.demoHasta.toMillis?rd.demoHasta.toMillis():null));
+            if(dm===undefined){ const h=firebase.firestore.Timestamp.fromMillis(Date.now()+14*86400000); try{ await ru.set({demoHasta:h},{merge:true}); dm=h.toMillis(); }catch(_){ dm=null; } }
+            if(dm){ const dias=Math.ceil((dm-Date.now())/86400000); if(dias<=0) rtDemoVencida(); else rtDemoCartel(dias); }
+          }
+        }catch(_){}
+        
         return true;
       }
       let n=null; try{ n=localStorage.getItem('rt_negocio'); }catch(_){}

@@ -19,10 +19,19 @@ service cloud.firestore {
     // Registro de usuarios (para el panel de actividad): cada dueño escribe solo el suyo; el admin lee todos.
     match /usuarios/{uid} {
       allow read: if esAdmin() || (request.auth != null && request.auth.uid == uid);
-      allow create, update: if request.auth != null
+      // El dueño escribe su registro; el fin de la prueba gratis (demoHasta) solo puede fijarlo una vez (máx. 15 días). El admin lo cambia.
+      allow create: if request.auth != null
         && request.auth.uid == uid
         && request.auth.token.firebase.sign_in_provider != 'anonymous'
-        && request.resource.data.keys().hasOnly(['email','nombre','alta','ultimoAcceso','app']);
+        && request.resource.data.keys().hasOnly(['email','nombre','alta','ultimoAcceso','app','demoHasta'])
+        && (!('demoHasta' in request.resource.data) || request.resource.data.demoHasta <= request.time + duration.value(15, 'd'));
+      allow update: if esAdmin()
+        || (request.auth != null
+            && request.auth.uid == uid
+            && request.auth.token.firebase.sign_in_provider != 'anonymous'
+            && request.resource.data.keys().hasOnly(['email','nombre','alta','ultimoAcceso','app','demoHasta'])
+            && (request.resource.data.get('demoHasta', null) == resource.data.get('demoHasta', null)
+                || (!('demoHasta' in resource.data) && request.resource.data.demoHasta <= request.time + duration.value(15, 'd'))));
       allow delete: if esAdmin();
     }
 
