@@ -661,6 +661,8 @@ var __rtPWA = (function() {
     <div class="toggle-row"><div class="toggle-row-name">Control de stock</div><label class="switch"><input type="checkbox" id="flagStock"><span class="slider-switch"></span></label></div>
     <div class="toggle-row"><div class="toggle-row-name">Recetas de producción</div><label class="switch"><input type="checkbox" id="flagRecetas"><span class="slider-switch"></span></label></div>
     <div class="toggle-row"><div class="toggle-row-name">Gastos del turno</div><label class="switch"><input type="checkbox" id="flagGastos"><span class="slider-switch"></span></label></div>
+    <div style="font-weight:700;margin:16px 0 6px">👥 Clientes y prueba gratis</div>
+    <div id="rtAdmClientes" style="max-height:260px;overflow:auto;font-size:13px">Cargando…</div>
     <div class="modal-actions">
       <button class="btn-secondary" id="modalFeaturesCancel">Cerrar</button>
       <button class="btn-confirm" id="modalFeaturesGuardar">Guardar</button>
@@ -1672,9 +1674,39 @@ var __rtPWA = (function() {
       document.getElementById('flagStock').checked=!!featuresActuales.stockHabilitado;
       document.getElementById('flagRecetas').checked=!!featuresActuales.recetasHabilitado;
       document.getElementById('flagGastos').checked=!!featuresActuales.gastosHabilitado;
-      document.getElementById('modalFeatures').classList.add('active');
+      document.getElementById('modalFeatures').classList.add('active'); rtAdmClientes();
     } else { document.getElementById('pinError').textContent='PIN incorrecto'; }
   });
+
+  /* Menú admin: clientes y prueba gratis (solo botones, sin escribir). Las reglas ya limitan esto a la cuenta admin. */
+  async function rtAdmClientes(){
+    const cont=document.getElementById('rtAdmClientes'); if(!cont) return;
+    try{
+      const snap=await db.collection('usuarios').get(); const ahora=Date.now(); let h='';
+      snap.docs.forEach(function(d){
+        const u=d.data(); if(u.app&&u.app!=='PanAR') return;
+        let est,col;
+        if(u.demoHasta===null){est='✅ Cliente';col='#27ae60';}
+        else if(u.demoHasta&&u.demoHasta.toMillis){const r=u.demoHasta.toMillis()-ahora; if(r>0){est='🎓 Prueba: '+Math.ceil(r/86400000)+' d';col='#e6a100';}else{est='🔒 Vencida';col='#e74c3c';}}
+        else{est='🕓 Sin fecha (arranca al ingresar)';col='#888';}
+        const em=(u.email||d.id).replace(/</g,'&lt;');
+        h+='<div style="border:1px solid #4443;border-radius:10px;padding:8px;margin-bottom:6px"><div style="font-weight:600;word-break:break-all">'+em+'</div><div style="color:'+col+';margin:2px 0 6px">'+est+'</div>'
+          +'<button onclick="rtAdmSet(\''+d.id+'\',\'cliente\')" style="padding:6px 10px;border-radius:8px;border:1px solid #27ae60;background:#27ae6022;color:#27ae60;margin-right:4px">✅ Pasar a cliente</button>'
+          +'<button onclick="rtAdmSet(\''+d.id+'\',7)" style="padding:6px 10px;border-radius:8px;border:1px solid #2563eb;background:#2563eb22;color:#60a5fa;margin-right:4px">+7 días</button>'
+          +'<button onclick="rtAdmSet(\''+d.id+'\',30)" style="padding:6px 10px;border-radius:8px;border:1px solid #2563eb;background:#2563eb22;color:#60a5fa">+30 días</button></div>';
+      });
+      cont.innerHTML=h||'No hay clientes registrados todavía.';
+    }catch(e){cont.textContent='No se pudo cargar la lista.';}
+  }
+  window.rtAdmSet=async function(uid,acc){
+    try{
+      const ref=db.collection('usuarios').doc(uid);
+      if(acc==='cliente'){ if(!confirm('¿Pasar este negocio a cliente real?'))return; await ref.update({demoHasta:null}); toast('Cliente activado'); }
+      else{ const s=await ref.get(); const u=s.data()||{}; const base=(u.demoHasta&&u.demoHasta.toMillis)?Math.max(u.demoHasta.toMillis(),Date.now()):Date.now();
+        await ref.update({demoHasta:firebase.firestore.Timestamp.fromMillis(base+acc*86400000)}); toast('Prueba extendida '+acc+' días'); }
+      rtAdmClientes();
+    }catch(e){toast('No se pudo actualizar','error');}
+  };
   document.getElementById('modalFeaturesCancel').addEventListener('click', ()=>document.getElementById('modalFeatures').classList.remove('active'));
   document.getElementById('modalFeaturesGuardar').addEventListener('click', ()=>{
     const nuevas={ stockHabilitado:document.getElementById('flagStock').checked, recetasHabilitado:document.getElementById('flagRecetas').checked, gastosHabilitado:document.getElementById('flagGastos').checked };
