@@ -106,8 +106,9 @@
 
   .badge-pendientes { display:inline-block; background:var(--naranja); color:#1A0F0A; font-size:0.7rem; font-weight:700; border-radius:16px; padding:2px 8px; margin-left:6px; }
 
-  .caja-layout { display:grid; grid-template-columns:1fr; gap:1rem; }
-  @media (min-width:760px) { .caja-layout { grid-template-columns:1.4fr 1fr; } }
+  .caja-layout { display:grid; grid-template-columns:minmax(0,1fr); gap:1rem; }
+  .caja-layout > * { min-width:0; }
+  @media (min-width:760px) { .caja-layout { grid-template-columns:minmax(0,1.4fr) minmax(0,1fr); } }
   .cat-filters { display:flex; gap:6px; overflow-x:auto; margin-bottom:0.8rem; padding-bottom:4px; }
   .cat-chip { background:var(--bg3); border:0.5px solid var(--border); color:var(--muted); padding:6px 14px; border-radius:20px; font-size:0.78rem; font-weight:600; cursor:pointer; white-space:nowrap; font-family:inherit; }
   .cat-chip.active { background:var(--tomate); color:#fff; border-color:var(--tomate); }

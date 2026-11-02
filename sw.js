@@ -1,5 +1,5 @@
 /* Service Worker — PanAR | RavenTechs | 02/08/2026 */
-var CACHE = 'panar-pwa-v1';
+var CACHE = 'panar-pwa-v2';
 var SHELL = ['/', '/index.html', '/manifest.json'];
 self.addEventListener('install', function(e) {
   e.waitUntil(caches.open(CACHE).then(function(c) {
