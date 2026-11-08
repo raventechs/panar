@@ -1,7 +1,7 @@
 // sw-panar.js — Service Worker PanAR v1.4
 // P3 ROBUSTEZ: cachea shell para uso offline completo
 
-const CACHE_NAME = 'panar-v1.5';
+const CACHE_NAME = 'panar-v1.8';
 const SHELL = [
   '/',
   '/index.html',

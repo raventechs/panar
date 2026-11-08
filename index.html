@@ -1,7 +1,8 @@
 <!DOCTYPE html>
 <!--
   ════════════════════════════════════════════════════════════
-  PANAR — CAJA REGISTRADORA PARA PANADERÍAS — v1.7
+  PANAR — CAJA REGISTRADORA PARA PANADERÍAS — v1.8
+  v1.8 (8/11/2026): TARJETA «TUS PRIMEROS PASOS» en Caja, solo durante la prueba gratis: 4 pasos (cargar productos, cobrar la primera venta, mirar Reportes, probar el Cierre de caja) que se tildan solos; se puede ocultar. Se guarda en el celular, no toca datos ni reglas.
   PIN6+REGISTRO: PIN de cajero de 6 números (los existentes siguen válidos), bloqueo 10 min tras 5 intentos y registro usuarios/{uid} para el panel. Requiere publicar firestore.rules.
   v1.7: BACKUP ARREGLADO: el automático diario no guardaba nada (ahora baja el archivo y deja copia local de los últimos 7 días);
   incluye gastos, restaura las fechas a su tipo y no pisa el plan contratado. Fecha: 2026-10-26
@@ -212,6 +213,16 @@
   .toast.warn { border-left-color:var(--amber); }
   @keyframes toastIn { from{opacity:0;transform:translateY(10px)} to{opacity:1;transform:translateY(0)} }
   button { touch-action:manipulation; }
+  /* Tus primeros pasos (solo durante la prueba gratis) */
+  .rt-chk{background:var(--bg2);border:2px solid #2563eb;border-radius:16px;padding:12px 14px;margin:0 0 12px;box-shadow:0 4px 16px rgba(37,99,235,.30)}
+  .rt-chk .tt{display:flex;justify-content:space-between;align-items:center;font-weight:800;font-size:0.95rem;margin-bottom:6px;color:var(--crema)}
+  .rt-chk .tt button{background:none;border:none;color:var(--muted);font-size:12px;text-decoration:underline;cursor:pointer;padding:4px}
+  .rt-chk .barra{height:6px;border-radius:99px;background:rgba(128,128,128,.25);margin:2px 0 8px;overflow:hidden}
+  .rt-chk .barra i{display:block;height:100%;background:#27ae60;border-radius:99px;transition:width .3s}
+  .rt-chk .paso{display:flex;align-items:center;gap:10px;width:100%;text-align:left;background:none;border:none;border-top:1px solid var(--border);padding:10px 2px;font-size:0.9rem;color:var(--crema);cursor:pointer;font-family:inherit}
+  .rt-chk .paso .ck{flex-shrink:0;width:24px;height:24px;border-radius:50%;border:2px solid #9aa4b2;display:flex;align-items:center;justify-content:center;font-size:14px;color:#fff}
+  .rt-chk .paso.ok{opacity:.65;text-decoration:line-through;cursor:default}
+  .rt-chk .paso.ok .ck{background:#27ae60;border-color:#27ae60}
 </style>
 <script>
 // RavenTechs PWA Banner v1.1 — en el HEAD para capturar beforeinstallprompt temprano
@@ -422,6 +433,7 @@ var __rtPWA = (function() {
 
   <main>
     <section class="view active" id="view-caja">
+      <div id="rtChecklist"></div>
       <div id="pendientesBadgeBox" style="display:none;margin-bottom:0.6rem;background:var(--bg2);border:0.5px solid var(--naranja);border-radius:18px;padding:8px 12px;font-size:0.8rem;">
         ⏳ Ventas offline pendientes de sincronizar: <span class="badge-pendientes" id="pendientesCount">0</span>
       </div>
@@ -697,6 +709,38 @@ var __rtPWA = (function() {
   /* PIN de cajero: 6 números al azar para negocios nuevos (los PIN existentes no se tocan) */
   function rtPin6(){ try{ var a=new Uint32Array(1); crypto.getRandomValues(a); return String(100000+(a[0]%900000)); }catch(e){ return String(100000+Math.floor(Math.random()*900000)); } }
   /* ══ PRUEBA GRATIS 14 DÍAS: cartel y pantalla de bloqueo ══ */
+  /* ── Tus primeros pasos: 4 pasos que se tildan solos, solo durante la prueba gratis. Se guarda en este celular; no toca datos. ── */
+  var rtEnPrueba=false;
+  function rtChkClave(){return 'rt_chk_'+((auth&&auth.currentUser&&auth.currentUser.uid)||'x');}
+  function rtChkLeer(){try{return JSON.parse(localStorage.getItem(rtChkClave())||'{}')||{};}catch(_){return {};}}
+  function rtChkGuardar(o){try{localStorage.setItem(rtChkClave(),JSON.stringify(o));}catch(_){}}
+  function rtChkVisible(){
+    if(!auth||!auth.currentUser||auth.currentUser.isAnonymous) return false;
+    if(rolActual&&rolActual!=='dueño') return false;
+    if(rtChkLeer().fin) return false;
+    return rtEnPrueba||!!(window.rtIsAdmin&&window.rtIsAdmin());
+  }
+  function rtIrTab(v){var b=document.querySelector('.tab-btn[data-view="'+v+'"]'); if(b) b.click();}
+  var RT_PASOS=[
+    {k:'prod',t:'Cargá tus productos en «Menú»',ir:function(){rtIrTab('menu');}},
+    {k:'venta',t:'Cobrá tu primera venta en «Caja»',ir:function(){rtIrTab('caja');}},
+    {k:'rep',t:'Mirá cómo vas en «Reportes»',ir:function(){rtIrTab('reportes');}},
+    {k:'cierre',t:'Probá el «Cierre de caja»',ir:function(){rtIrTab('caja');var b=document.getElementById('cierreBtn');if(b)b.scrollIntoView({behavior:'smooth',block:'center'});}}
+  ];
+  function rtChkMarcar(k){try{ if(!rtChkVisible()) return; var o=rtChkLeer(); if(o[k]) return; o[k]=1; rtChkGuardar(o); rtChkPintar(); }catch(_){}}
+  function rtChkPintar(){
+    var box=document.getElementById('rtChecklist'); if(!box) return;
+    try{
+      if(!rtChkVisible()){ box.innerHTML=''; return; }
+      var o=rtChkLeer(), hechos=RT_PASOS.filter(function(p){return o[p.k];}).length;
+      if(hechos===RT_PASOS.length){ o.fin=1; rtChkGuardar(o); box.innerHTML=''; toast('🎉 ¡Listo! Ya sabés lo básico de PanAR'); return; }
+      box.innerHTML='<div class="rt-chk"><div class="tt"><span>🚀 Tus primeros pasos ('+hechos+' de '+RT_PASOS.length+')</span><button type="button" onclick="rtChkOcultar()">Ocultar</button></div><div class="barra"><i style="width:'+Math.round(hechos*100/RT_PASOS.length)+'%"></i></div>'
+        +RT_PASOS.map(function(p,i){return '<button type="button" class="paso'+(o[p.k]?' ok':'')+'" onclick="rtChkIr('+i+')"><span class="ck">'+(o[p.k]?'✓':'')+'</span><span>'+p.t+'</span></button>';}).join('')+'</div>';
+    }catch(_){ box.innerHTML=''; }
+  }
+  function rtChkIr(i){var p=RT_PASOS[i]; if(p&&!rtChkLeer()[p.k]) p.ir();}
+  function rtChkOcultar(){var o=rtChkLeer(); o.fin=1; rtChkGuardar(o); var b=document.getElementById('rtChecklist'); if(b) b.innerHTML='';}
+  window.rtChkIr=rtChkIr; window.rtChkOcultar=rtChkOcultar;
   function rtDemoCartel(dias){
     if(document.getElementById('rtDemoCartel')) return;
     var urgente=dias<=3, b=document.createElement('a');
@@ -728,10 +772,10 @@ var __rtPWA = (function() {
             const ru=db.collection('usuarios').doc(user.uid), rs=await ru.get(), rd=rs.exists?rs.data():{};
             let dm=(rd.demoHasta===undefined)?undefined:(rd.demoHasta===null?null:(rd.demoHasta.toMillis?rd.demoHasta.toMillis():null));
             if(dm===undefined){ const h=firebase.firestore.Timestamp.fromMillis(Date.now()+14*86400000); try{ await ru.set({demoHasta:h},{merge:true}); dm=h.toMillis(); }catch(_){ dm=null; } }
-            if(dm){ const dias=Math.ceil((dm-Date.now())/86400000); if(dias<=0) rtDemoVencida(); else rtDemoCartel(dias); }
+            if(dm){ const dias=Math.ceil((dm-Date.now())/86400000); if(dias<=0) rtDemoVencida(); else { rtDemoCartel(dias); rtEnPrueba=true; } }
           }
         }catch(_){}
-        
+        rtChkPintar();
         return true;
       }
       let n=null; try{ n=localStorage.getItem('rt_negocio'); }catch(_){}
@@ -961,7 +1005,8 @@ var __rtPWA = (function() {
       if (btn.dataset.view === 'menu') renderProductosLista();
       if (btn.dataset.view === 'recetas') renderRecetasLista();
       if (btn.dataset.view === 'stock') renderInsumosLista();
-      if (btn.dataset.view === 'reportes') escucharVentasHoy();
+      if (btn.dataset.view === 'reportes') { escucharVentasHoy(); rtChkMarcar('rep'); }
+      if (btn.dataset.view === 'caja') rtChkPintar();
       if (btn.dataset.view === 'historial') buscarHistorial('hoy');
     });
   });
@@ -1100,7 +1145,7 @@ var __rtPWA = (function() {
       try {
         await col('ventas').add({ ...ventaData, ts:firebase.firestore.FieldValue.serverTimestamp() });
         descontarStockPorVenta(itemsVendidos);
-        toast('Venta registrada — $' + total);
+        toast('Venta registrada — $' + total); rtChkMarcar('venta');
       } catch(e) { logError('cobrar',e.message); toast('Error al guardar. Reintentá.'); return; }
     } else {
       await idbAdd('ventas_pendientes', ventaData);
@@ -1178,7 +1223,7 @@ var __rtPWA = (function() {
     if (!data.nombre) { toast('Falta el nombre'); return; }
     if (!Object.keys(precios).length) { toast('Agregá al menos un tamaño'); return; }
     const ref = editandoProductoId ? col('productos').doc(editandoProductoId) : col('productos').doc();
-    ref.set(data,{merge:true}).then(()=>{ toast('Producto guardado'); document.getElementById('modalProducto').classList.remove('active'); }).catch(e=>logError('guardarProducto',e));
+    ref.set(data,{merge:true}).then(()=>{ toast('Producto guardado'); rtChkMarcar('prod'); document.getElementById('modalProducto').classList.remove('active'); }).catch(e=>logError('guardarProducto',e));
   });
 
   /* ════ RECETAS ════ */
@@ -1659,7 +1704,7 @@ var __rtPWA = (function() {
     document.querySelectorAll('.pago-chip').forEach(c=>c.classList.remove('active'));
     document.querySelector('.pago-chip[data-pago="efectivo"]').classList.add('active');
     renderCarrito();
-    toast('Cierre registrado ✓');
+    toast('Cierre registrado ✓'); rtChkMarcar('cierre');
   });
 
   /* ════ PIN RAVENTECHS — P1 ROBUSTEZ ════ */
