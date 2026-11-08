@@ -1,6 +1,7 @@
 rules_version = '2';
 // Publicar en Firebase Console → Firestore Database → Reglas.
 // Estas reglas NO borran ni modifican datos: solo controlan quién puede leer/escribir.
+// v2 (8/11/2026): sucursales (adicional). El admin fija limiteSucursales en usuarios/{uid}; el cajero puede operar dentro de la sucursal que le asigna su link.
 service cloud.firestore {
   match /databases/{database}/documents {
 
@@ -29,7 +30,8 @@ service cloud.firestore {
         || (request.auth != null
             && request.auth.uid == uid
             && request.auth.token.firebase.sign_in_provider != 'anonymous'
-            && request.resource.data.keys().hasOnly(['email','nombre','alta','ultimoAcceso','app','demoHasta'])
+            && request.resource.data.keys().hasOnly(['email','nombre','alta','ultimoAcceso','app','demoHasta','limiteSucursales'])
+            && request.resource.data.get('limiteSucursales', null) == resource.data.get('limiteSucursales', null)
             && (request.resource.data.get('demoHasta', null) == resource.data.get('demoHasta', null)
                 || (!('demoHasta' in resource.data) && request.resource.data.demoHasta <= request.time + duration.value(15, 'd'))));
       allow delete: if esAdmin();
@@ -48,7 +50,7 @@ service cloud.firestore {
     // Datos del negocio: el dueño todo; el cajero (con membresía) opera caja; el admin solo lee (copias de seguridad).
     match /negocios/{owner}/{col}/{doc=**} {
       allow read, write: if esDueno(owner)
-        || (col in ['ventas','productos','insumos','gastos','cierres','comandas'] && esCajero(owner));
+        || (col in ['ventas','productos','insumos','gastos','cierres','comandas','sucursales'] && esCajero(owner));
       allow read: if esAdmin();
       allow read: if col == 'configuracion' && esCajero(owner);
     }

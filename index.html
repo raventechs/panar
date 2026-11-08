@@ -1,7 +1,8 @@
 <!DOCTYPE html>
 <!--
   ════════════════════════════════════════════════════════════
-  PANAR — CAJA REGISTRADORA PARA PANADERÍAS — v1.8
+  PANAR — CAJA REGISTRADORA PARA PANADERÍAS — v1.9
+  v1.9 (8/11/2026): ADICIONAL «VARIAS SUCURSALES»: cada sucursal tiene sus propias ventas, gastos y cierres (productos, insumos, recetas y configuración compartidos); el cajero entra con el link de su sucursal. El admin lo activa con botones (1 / Hasta 3 / Todas) en Menú admin → clientes. Sin activar, todo funciona igual que antes. Requiere publicar firestore.rules.
   v1.8 (8/11/2026): TARJETA «TUS PRIMEROS PASOS» en Caja, solo durante la prueba gratis: 4 pasos (cargar productos, cobrar la primera venta, mirar Reportes, probar el Cierre de caja) que se tildan solos; se puede ocultar. Se guarda en el celular, no toca datos ni reglas.
   PIN6+REGISTRO: PIN de cajero de 6 números (los existentes siguen válidos), bloqueo 10 min tras 5 intentos y registro usuarios/{uid} para el panel. Requiere publicar firestore.rules.
   v1.7: BACKUP ARREGLADO: el automático diario no guardaba nada (ahora baja el archivo y deja copia local de los últimos 7 días);
@@ -414,6 +415,7 @@ var __rtPWA = (function() {
         </svg>
       </button>
       <span class="topbar-title">Pan<span>AR</span></span>
+      <span id="rtSucBadge" style="display:none;margin-left:8px;font-size:11px;font-weight:700;padding:3px 8px;border-radius:99px;background:rgba(37,99,235,.18);color:#60a5fa"></span>
     </div>
     <div class="topbar-right">
       <button class="icon-btn" id="darkToggleBtn" title="Modo claro/oscuro">🌙</button>
@@ -542,6 +544,13 @@ var __rtPWA = (function() {
         <label>Nombre de la panadería</label><input type="text" id="cfgNombre" placeholder="Mi Panadería">
         <label>Horario de atención</label><input type="text" id="cfgHorario" placeholder="Lun a Dom 7:00 - 13:00">
         <button class="btn-tomate" style="margin-top:12px;" id="guardarCfgBtn">Guardar</button>
+      </div>
+      <div class="config-section" id="rtSucSection" style="display:none">
+        <h4>🏪 Sucursales</h4>
+        <p style="font-size:0.78rem;color:var(--muted);margin-bottom:8px">Cada sucursal tiene sus propias ventas, gastos y cierres; el menú y el stock son compartidos. Cada cajero entra con el link de su sucursal.</p>
+        <div id="rtSucLista"></div>
+        <p style="font-size:0.75rem;color:var(--muted);margin:6px 0" id="rtSucInfo"></p>
+        <button class="btn-tomate" id="rtSucNueva" onclick="rtSucNueva()">+ Nueva sucursal</button>
       </div>
       <div class="config-section">
         <h4>🎓 Modo Práctica</h4>
@@ -704,8 +713,13 @@ var __rtPWA = (function() {
 
   /* ══ AISLAMIENTO POR NEGOCIO (v2.8/1.6): todos los datos viven en negocios/{uid}/… ══ */
   let OWNER = null;
-  function col(n){ if(!OWNER) throw new Error('Sin negocio activo'); return db.collection('negocios').doc(OWNER).collection(n); }
-  try{ const q=new URLSearchParams(location.search).get('n'); if(q && /^[A-Za-z0-9]{10,40}$/.test(q)) localStorage.setItem('rt_negocio',q); }catch(_){}
+  /* Sucursales (adicional): ventas, gastos, cierres y comandas son de cada sucursal; productos, insumos y configuración son del negocio (compartidos). 'principal' = la ruta de siempre, sin cambios. */
+  let SUC='principal', rtSucursales=[], rtLimiteSuc=1;
+  const RT_SUC_COMPARTIDAS=['productos','insumos','configuracion','recetas'];
+  function col(n){ if(!OWNER) throw new Error('Sin negocio activo'); const base=db.collection('negocios').doc(OWNER);
+    if(SUC && SUC!=='principal' && RT_SUC_COMPARTIDAS.indexOf(n)<0) return base.collection('sucursales').doc(SUC).collection(n);
+    return base.collection(n); }
+  try{ const q=new URLSearchParams(location.search).get('n'); if(q && /^[A-Za-z0-9]{10,40}$/.test(q)){ localStorage.setItem('rt_negocio',q); const sq=new URLSearchParams(location.search).get('s'); if(sq && /^[A-Za-z0-9]{10,40}$/.test(sq)) localStorage.setItem('rt_suc',sq); else localStorage.removeItem('rt_suc'); } }catch(_){}
   /* PIN de cajero: 6 números al azar para negocios nuevos (los PIN existentes no se tocan) */
   function rtPin6(){ try{ var a=new Uint32Array(1); crypto.getRandomValues(a); return String(100000+(a[0]%900000)); }catch(e){ return String(100000+Math.floor(Math.random()*900000)); } }
   /* ══ PRUEBA GRATIS 14 DÍAS: cartel y pantalla de bloqueo ══ */
@@ -775,12 +789,14 @@ var __rtPWA = (function() {
             if(dm){ const dias=Math.ceil((dm-Date.now())/86400000); if(dias<=0) rtDemoVencida(); else { rtDemoCartel(dias); rtEnPrueba=true; } }
           }
         }catch(_){}
+        await rtCargarSucursales(user);
         rtChkPintar();
         return true;
       }
       let n=null; try{ n=localStorage.getItem('rt_negocio'); }catch(_){}
       if(!n) throw new Error('sin negocio');
       OWNER = n;
+      SUC='principal'; try{ const sq=localStorage.getItem('rt_suc'); if(sq && /^[A-Za-z0-9]{10,40}$/.test(sq)) SUC=sq; }catch(_){}
       const ref = db.collection('negocios').doc(n).collection('cajeros').doc(user.uid);
       if(window._pinPend){
         const p=window._pinPend; window._pinPend=null;
@@ -944,6 +960,7 @@ var __rtPWA = (function() {
       if(!(await resolverNegocio(user))) return;
       await abrirIDB();
       rolActual = user.isAnonymous ? 'cajero' : 'dueño';
+      try{ rtSucPintar(); }catch(_){}
       document.getElementById('loginScreen').classList.remove('active');
       document.getElementById('app').classList.add('active');
       cargarProductos();
@@ -1743,11 +1760,56 @@ var __rtPWA = (function() {
         h+='<div style="border:1px solid #4443;border-radius:10px;padding:8px;margin-bottom:6px"><div style="font-weight:600;word-break:break-all">'+em+'</div><div style="color:'+col+';margin:2px 0 6px">'+est+'</div>'
           +'<button onclick="rtAdmSet(\''+d.id+'\',\'cliente\')" style="padding:6px 10px;border-radius:8px;border:1px solid #27ae60;background:#27ae6022;color:#27ae60;margin-right:4px">✅ Pasar a cliente</button>'
           +'<button onclick="rtAdmSet(\''+d.id+'\',7)" style="padding:6px 10px;border-radius:8px;border:1px solid #2563eb;background:#2563eb22;color:#60a5fa;margin-right:4px">+7 días</button>'
-          +'<button onclick="rtAdmSet(\''+d.id+'\',30)" style="padding:6px 10px;border-radius:8px;border:1px solid #2563eb;background:#2563eb22;color:#60a5fa">+30 días</button></div>';
+          +'<button onclick="rtAdmSet(\''+d.id+'\',30)" style="padding:6px 10px;border-radius:8px;border:1px solid #2563eb;background:#2563eb22;color:#60a5fa">+30 días</button></div>'+'<div style="margin-top:6px;font-size:12px">🏪 Sucursales: '+[[1,'1'],[3,'Hasta 3'],[99,'Todas']].map(function(o){const a=((u.limiteSucursales>0?u.limiteSucursales:1)===o[0]);return '<button onclick="rtAdmLim(\''+d.id+'\','+o[0]+')" style="padding:5px 9px;margin-right:4px;border-radius:8px;border:1.5px solid '+(a?'#E03C26':'#4446')+';background:'+(a?'#E03C2622':'transparent')+';color:inherit;font-weight:'+(a?'700':'500')+'">'+o[1]+'</button>';}).join('')+'</div></div>';
       });
       cont.innerHTML=h||'No hay clientes registrados todavía.';
     }catch(e){cont.textContent='No se pudo cargar la lista.';}
   }
+
+  /* ── Sucursales: lista, cambio, alta y links de cajero. El límite lo fija el admin (usuarios/{uid}.limiteSucursales, con botones); sin campo = 1 = sin sucursales. ── */
+  async function rtCargarSucursales(user){
+    try{
+      let lim=1; try{ const us=await db.collection('usuarios').doc(user.uid).get(); const l=us.exists?us.data().limiteSucursales:undefined; if(l>0) lim=l; }catch(_){}
+      if(window.rtIsAdmin&&window.rtIsAdmin()) lim=99;
+      rtLimiteSuc=lim;
+      const snap=await db.collection('negocios').doc(OWNER).collection('sucursales').get();
+      rtSucursales=snap.docs.map(d=>Object.assign({id:d.id},d.data()));
+      let want='principal'; try{ want=localStorage.getItem('rt_suc_'+user.uid)||'principal'; }catch(_){}
+      SUC=(want!=='principal'&&rtSucursales.some(x=>x.id===want))?want:'principal';
+    }catch(_){ SUC='principal'; }
+    rtSucPintar();
+  }
+  function rtSucNombre(id){ if(id==='principal') return 'Principal'; const x=rtSucursales.find(z=>z.id===id); return x?(x.nombre||'Sucursal'):'Sucursal'; }
+  function rtSucPintar(){
+    try{
+      const bd=document.getElementById('rtSucBadge'), sec=document.getElementById('rtSucSection'), cont=document.getElementById('rtSucLista');
+      const habilitada=(rtLimiteSuc>1||rtSucursales.length>0)&&rolActual==='dueño';
+      if(bd){ if(habilitada&&SUC!=='principal'){ bd.style.display=''; bd.textContent='🏪 '+rtSucNombre(SUC); } else bd.style.display='none'; }
+      if(!sec||!cont) return;
+      sec.style.display=habilitada?'':'none'; if(!habilitada) return;
+      const filas=[{id:'principal',nombre:'Principal'}].concat(rtSucursales);
+      cont.innerHTML=filas.map(function(x){ const act=x.id===SUC; const nom=String(x.nombre||'Sucursal').replace(/</g,'&lt;');
+        return '<div style="display:flex;align-items:center;justify-content:space-between;gap:6px;flex-wrap:wrap;border:1px solid var(--border);border-radius:12px;padding:8px 10px;margin-bottom:6px"><div style="font-weight:700">'+nom+(act?' <span style="font-size:11px;color:#27ae60">● estás acá</span>':'')+'</div><div style="display:flex;gap:6px;flex-wrap:wrap">'
+          +(act?'':'<button class="btn-secondary" style="width:auto;padding:6px 12px" onclick="rtSucCambiar(\''+x.id+'\')">Entrar</button>')
+          +'<button class="btn-secondary" style="width:auto;padding:6px 12px" onclick="rtSucLink(\''+x.id+'\')">📋 Link de cajero</button></div></div>'; }).join('');
+      const usadas=rtSucursales.length+1, info=document.getElementById('rtSucInfo');
+      if(info) info.textContent=usadas+' de '+(rtLimiteSuc>=99?'ilimitadas':rtLimiteSuc)+' sucursales';
+      const nb=document.getElementById('rtSucNueva'); if(nb) nb.style.display=(usadas<rtLimiteSuc)?'':'none';
+    }catch(_){}
+  }
+  window.rtSucCambiar=function(id){ try{ localStorage.setItem('rt_suc_'+auth.currentUser.uid,id); }catch(_){} location.reload(); };
+  window.rtSucLink=function(id){
+    const url=location.origin+location.pathname+'?n='+OWNER+(id==='principal'?'':'&s='+id);
+    (navigator.clipboard?navigator.clipboard.writeText(url):Promise.reject()).then(()=>toast('Link copiado'),()=>{ try{ prompt('Copiá el link:',url); }catch(_){} });
+  };
+  window.rtSucNueva=async function(){
+    if(rtSucursales.length+1>=rtLimiteSuc){ toast('Llegaste al límite de sucursales'); return; }
+    const nombre=(prompt('Nombre de la sucursal:')||'').trim(); if(!nombre) return;
+    try{ const ref=await db.collection('negocios').doc(OWNER).collection('sucursales').add({nombre:nombre,creadoEn:firebase.firestore.FieldValue.serverTimestamp()});
+      rtSucursales.push({id:ref.id,nombre:nombre}); rtSucPintar(); toast('Sucursal creada ✅');
+    }catch(e){ toast('No se pudo crear la sucursal'); }
+  };
+  window.rtAdmLim=async function(uid,v){ try{ await db.collection('usuarios').doc(uid).update({limiteSucursales:v}); toast('Sucursales: '+(v>=99?'sin límite':v)); rtAdmClientes(); }catch(e){ toast('No se pudo actualizar'); } };
   window.rtAdmSet=async function(uid,acc){
     try{
       const ref=db.collection('usuarios').doc(uid);
