@@ -430,6 +430,7 @@ var __rtPWA = (function() {
     <button class="tab-btn" data-view="stock" style="display:none;">Stock</button>
     <button class="tab-btn" data-view="reportes">Reportes</button>
     <button class="tab-btn" data-view="historial">Historial</button>
+    <button class="tab-btn" data-view="dueno" id="rtTabDueno" style="display:none;">🔒 Dueño</button>
     <button class="tab-btn" data-view="configuracion">Configuración</button>
   </nav>
 
@@ -523,7 +524,9 @@ var __rtPWA = (function() {
       <div class="top-list"><h4 style="margin-bottom:0.6rem;font-size:0.9rem;">Detalle de ventas</h4><div id="historialLista"></div></div>
     </section>
 
-    <section class="view" id="view-configuracion">
+    <section class="view" id="view-dueno"><div id="rtDuenoBody" style="padding:14px 4px"></div></section>
+
+<section class="view" id="view-configuracion">
 <div class="config-section">
         <h4>❓ Instructivo</h4>
         <p style="font-size:0.78rem;color:var(--muted);margin-bottom:10px;">Guía paso a paso de cómo usar la app, con preguntas frecuentes.</p>
@@ -714,7 +717,7 @@ var __rtPWA = (function() {
   /* ══ AISLAMIENTO POR NEGOCIO (v2.8/1.6): todos los datos viven en negocios/{uid}/… ══ */
   let OWNER = null;
   /* Sucursales (adicional): ventas, gastos, cierres y comandas son de cada sucursal; productos, insumos y configuración son del negocio (compartidos). 'principal' = la ruta de siempre, sin cambios. */
-  let SUC='principal', rtSucursales=[], rtLimiteSuc=1;
+  let SUC='principal', rtSucursales=[], rtLimiteSuc=1, rtPlusDueno=false;
   const RT_SUC_COMPARTIDAS=['productos','insumos','configuracion','recetas'];
   function col(n){ if(!OWNER) throw new Error('Sin negocio activo'); const base=db.collection('negocios').doc(OWNER);
     if(SUC && SUC!=='principal' && RT_SUC_COMPARTIDAS.indexOf(n)<0) return base.collection('sucursales').doc(SUC).collection(n);
@@ -1760,7 +1763,7 @@ var __rtPWA = (function() {
         h+='<div style="border:1px solid #4443;border-radius:10px;padding:8px;margin-bottom:6px"><div style="font-weight:600;word-break:break-all">'+em+'</div><div style="color:'+col+';margin:2px 0 6px">'+est+'</div>'
           +'<button onclick="rtAdmSet(\''+d.id+'\',\'cliente\')" style="padding:6px 10px;border-radius:8px;border:1px solid #27ae60;background:#27ae6022;color:#27ae60;margin-right:4px">✅ Pasar a cliente</button>'
           +'<button onclick="rtAdmSet(\''+d.id+'\',7)" style="padding:6px 10px;border-radius:8px;border:1px solid #2563eb;background:#2563eb22;color:#60a5fa;margin-right:4px">+7 días</button>'
-          +'<button onclick="rtAdmSet(\''+d.id+'\',30)" style="padding:6px 10px;border-radius:8px;border:1px solid #2563eb;background:#2563eb22;color:#60a5fa">+30 días</button></div>'+'<div style="margin-top:6px;font-size:12px">🏪 Sucursales: '+[[1,'1'],[3,'Hasta 3'],[99,'Todas']].map(function(o){const a=((u.limiteSucursales>0?u.limiteSucursales:1)===o[0]);return '<button onclick="rtAdmLim(\''+d.id+'\','+o[0]+')" style="padding:5px 9px;margin-right:4px;border-radius:8px;border:1.5px solid '+(a?'#E03C26':'#4446')+';background:'+(a?'#E03C2622':'transparent')+';color:inherit;font-weight:'+(a?'700':'500')+'">'+o[1]+'</button>';}).join('')+'</div></div>';
+          +'<button onclick="rtAdmSet(\''+d.id+'\',30)" style="padding:6px 10px;border-radius:8px;border:1px solid #2563eb;background:#2563eb22;color:#60a5fa">+30 días</button></div>'+'<div style="margin-top:6px;font-size:12px"><button onclick="rtAdmPlus(\''+d.id+'\','+(u.panelDueno?'false':'true')+')" style="padding:6px 10px;border-radius:8px;border:1px solid #e6a100;background:#e6a10022;color:#e6a100">'+(u.panelDueno?'⭐ Panel dueño: ACTIVO (quitar)':'⭐ Activar Panel dueño')+'</button></div>'+'<div style="margin-top:6px;font-size:12px">🏪 Sucursales: '+[[1,'1'],[3,'Hasta 3'],[99,'Todas']].map(function(o){const a=((u.limiteSucursales>0?u.limiteSucursales:1)===o[0]);return '<button onclick="rtAdmLim(\''+d.id+'\','+o[0]+')" style="padding:5px 9px;margin-right:4px;border-radius:8px;border:1.5px solid '+(a?'#E03C26':'#4446')+';background:'+(a?'#E03C2622':'transparent')+';color:inherit;font-weight:'+(a?'700':'500')+'">'+o[1]+'</button>';}).join('')+'</div></div>';
       });
       cont.innerHTML=h||'No hay clientes registrados todavía.';
     }catch(e){cont.textContent='No se pudo cargar la lista.';}
@@ -1769,7 +1772,7 @@ var __rtPWA = (function() {
   /* ── Sucursales: lista, cambio, alta y links de cajero. El límite lo fija el admin (usuarios/{uid}.limiteSucursales, con botones); sin campo = 1 = sin sucursales. ── */
   async function rtCargarSucursales(user){
     try{
-      let lim=1; try{ const us=await db.collection('usuarios').doc(user.uid).get(); const l=us.exists?us.data().limiteSucursales:undefined; if(l>0) lim=l; }catch(_){}
+      let lim=1; try{ const us=await db.collection('usuarios').doc(user.uid).get(); const l=us.exists?us.data().limiteSucursales:undefined; if(l>0) lim=l; rtPlusDueno=!!(us.exists&&us.data().panelDueno); }catch(_){}
       if(window.rtIsAdmin&&window.rtIsAdmin()) lim=99;
       rtLimiteSuc=lim;
       const snap=await db.collection('negocios').doc(OWNER).collection('sucursales').get();
@@ -1784,6 +1787,7 @@ var __rtPWA = (function() {
     try{
       const bd=document.getElementById('rtSucBadge'), sec=document.getElementById('rtSucSection'), cont=document.getElementById('rtSucLista');
       const habilitada=(rtLimiteSuc>1||rtSucursales.length>0)&&rolActual==='dueño';
+      rtDuenoUI(habilitada);
       if(bd){ if(habilitada&&SUC!=='principal'){ bd.style.display=''; bd.textContent='🏪 '+rtSucNombre(SUC); } else bd.style.display='none'; }
       if(!sec||!cont) return;
       sec.style.display=habilitada?'':'none'; if(!habilitada) return;
@@ -1797,6 +1801,57 @@ var __rtPWA = (function() {
       const nb=document.getElementById('rtSucNueva'); if(nb) nb.style.display=(usadas<rtLimiteSuc)?'':'none';
     }catch(_){}
   }
+
+  /* ── Plus «Panel del dueño» (solo con 2+ locales): chips para cambiar de local + pestaña Dueño con el resumen del día de cada local. Lo activa el admin por cliente (usuarios/{uid}.panelDueno). ── */
+  function rtPlusActivo(){ return rtPlusDueno || !!(window.rtIsAdmin&&window.rtIsAdmin()); }
+  function rtDuenoUI(hab){
+    try{
+      const tb=document.getElementById('rtTabDueno');
+      if(tb){ tb.style.display=hab?'':'none'; tb.textContent=rtPlusActivo()?'📊 Dueño':'🔒 Dueño'; if(!tb._rt){ tb._rt=1; tb.addEventListener('click',rtDuenoRender); } }
+      const caja=document.getElementById('view-caja'); if(!caja) return;
+      let bar=document.getElementById('rtLocalBar');
+      if(!hab){ if(bar) bar.remove(); return; }
+      if(!bar){ bar=document.createElement('div'); bar.id='rtLocalBar'; bar.style.cssText='display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:0 0 10px'; caja.insertBefore(bar,caja.firstChild); }
+      bar.textContent='';
+      const l0=document.createElement('span'); l0.style.cssText='font-size:12px;opacity:.7'; l0.textContent='Local:'; bar.appendChild(l0);
+      [{id:'principal',nombre:'Principal'}].concat(rtSucursales).forEach(function(x){
+        const b=document.createElement('button'); b.type='button'; b.textContent=x.nombre||'Sucursal';
+        b.style.cssText='font-size:12px;font-weight:700;padding:6px 12px;border-radius:14px;cursor:pointer;border:1px solid var(--tomate,#e03c26);'+(x.id===SUC?'background:var(--tomate,#e03c26);color:#fff;':'background:transparent;color:var(--tomate,#e03c26);');
+        if(x.id!==SUC) b.onclick=function(){ rtSucCambiar(x.id); };
+        bar.appendChild(b);
+      });
+    }catch(_){}
+  }
+  async function rtDuenoRender(){
+    const box=document.getElementById('rtDuenoBody'); if(!box) return;
+    if(!rtPlusActivo()){
+      const wa='https://wa.me/5491136547592?text='+encodeURIComponent('Hola RavenTechs, quiero el Plus Panel del dueño de PanAR');
+      box.innerHTML='<div style="text-align:center;padding:20px 10px"><div style="font-size:46px">🔒</div><h2 style="margin:8px 0 6px">Panel del dueño <span style="font-size:.6em">⭐ Plus</span></h2>'
+        +'<p style="opacity:.8;font-size:.9rem;line-height:1.5;max-width:320px;margin:0 auto 16px">Mirá todos tus locales juntos: cuánto vendió cada uno hoy, el total general y entrá al detalle de cada sucursal sin salir de tu cuenta.</p>'
+        +'<a href="'+wa+'" target="_blank" rel="noopener" style="display:inline-block;background:#25D366;color:#fff;padding:12px 20px;border-radius:12px;font-weight:700;text-decoration:none">📲 Quiero activarlo</a></div>';
+      return;
+    }
+    box.textContent='Cargando…';
+    const hoy=new Date().toISOString().slice(0,10), base=db.collection('negocios').doc(OWNER);
+    const locales=[{id:'principal',nombre:'Principal'}].concat(rtSucursales);
+    const rs=await Promise.all(locales.map(async function(x){
+      try{ const ref=x.id==='principal'?base:base.collection('sucursales').doc(x.id); const sn=await ref.collection('ventas').where('fechaDia','==',hoy).get();
+        let t=0; sn.docs.forEach(function(d){ t+=Number(d.data().total)||0; }); return {x:x,n:sn.size,t:t}; }catch(e){ return {x:x,n:0,t:0,err:1}; } }));
+    const tot=rs.reduce(function(a,r){ return a+r.t; },0), cant=rs.reduce(function(a,r){ return a+r.n; },0);
+    const money=function(v){ return '$'+Math.round(v).toLocaleString('es-AR'); };
+    box.textContent='';
+    const h=document.createElement('div'); h.style.cssText='text-align:center;margin-bottom:12px';
+    h.innerHTML='<div style="font-size:12px;opacity:.7">Ventas de hoy · todos los locales</div><div style="font-size:30px;font-weight:800">'+money(tot)+'</div><div style="font-size:12px;opacity:.7">'+cant+' venta'+(cant===1?'':'s')+'</div>';
+    box.appendChild(h);
+    rs.forEach(function(r){
+      const c=document.createElement('div'); c.style.cssText='display:flex;align-items:center;justify-content:space-between;gap:8px;border:1px solid var(--border,#4443);border-radius:12px;padding:10px 12px;margin-bottom:8px';
+      const l=document.createElement('div'); const nm=document.createElement('div'); nm.style.fontWeight='700'; nm.textContent='🏪 '+(r.x.nombre||'Sucursal'); const sb=document.createElement('div'); sb.style.cssText='font-size:12px;opacity:.7'; sb.textContent=r.err?'No se pudo leer':(r.n+' venta'+(r.n===1?'':'s')+' · '+money(r.t)); l.appendChild(nm); l.appendChild(sb); c.appendChild(l);
+      if(r.x.id!==SUC){ const b=document.createElement('button'); b.className='btn-secondary'; b.style.cssText='width:auto;padding:6px 12px'; b.textContent='Ver detalle'; b.onclick=function(){ rtSucCambiar(r.x.id); }; c.appendChild(b); }
+      else { const e=document.createElement('span'); e.style.cssText='font-size:11px;opacity:.7'; e.textContent='estás acá'; c.appendChild(e); }
+      box.appendChild(c);
+    });
+  }
+  window.rtAdmPlus=async function(uid,on){ try{ await db.collection('usuarios').doc(uid).update({panelDueno:!!on}); toast(on?'⭐ Panel del dueño activado (lo verá al reabrir la app)':'Panel del dueño desactivado'); rtAdmClientes(); }catch(e){ toast('Error: '+e.message); } };
   window.rtSucCambiar=function(id){ try{ localStorage.setItem('rt_suc_'+auth.currentUser.uid,id); }catch(_){} location.reload(); };
   window.rtSucLink=function(id){
     const url=location.origin+location.pathname+'?n='+OWNER+(id==='principal'?'':'&s='+id);
