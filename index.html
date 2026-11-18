@@ -1,7 +1,8 @@
 <!DOCTYPE html>
 <!--
   ════════════════════════════════════════════════════════════
-  PANAR — CAJA REGISTRADORA PARA PANADERÍAS — v1.9
+  PANAR — CAJA REGISTRADORA PARA PANADERÍAS — v1.10
+  v1.10 (17/11/2026): PANTALLA DE BIENVENIDA POR ROL: botones Dueño / Empleado (Caja); el empleado entra con el PIN del punto de venta. No cambia reglas ni datos.
   v1.9 (8/11/2026): ADICIONAL «VARIAS SUCURSALES»: cada sucursal tiene sus propias ventas, gastos y cierres (productos, insumos, recetas y configuración compartidos); el cajero entra con el link de su sucursal. El admin lo activa con botones (1 / Hasta 3 / Todas) en Menú admin → clientes. Sin activar, todo funciona igual que antes. Requiere publicar firestore.rules.
   v1.8 (8/11/2026): TARJETA «TUS PRIMEROS PASOS» en Caja, solo durante la prueba gratis: 4 pasos (cargar productos, cobrar la primera venta, mirar Reportes, probar el Cierre de caja) que se tildan solos; se puede ocultar. Se guarda en el celular, no toca datos ni reglas.
   PIN6+REGISTRO: PIN de cajero de 6 números (los existentes siguen válidos), bloqueo 10 min tras 5 intentos y registro usuarios/{uid} para el panel. Requiere publicar firestore.rules.
@@ -386,6 +387,14 @@ var __rtPWA = (function() {
       <line x1="70" y1="40" x2="62" y2="58" stroke="#E03C26" stroke-width="3.5" stroke-linecap="round"/>
     </svg>
     <h1>PanAR</h1>
+    <div id="rtBienvenida">
+      <p class="sub">¿Cómo querés entrar?</p>
+      <button class="btn-tomate" id="bienDueno" type="button" style="margin-bottom:10px">🔒 Dueño</button>
+      <button class="btn-secondary" id="bienCaja" type="button" style="width:100%;margin-bottom:10px;color:var(--naranja);border-color:var(--naranja)">🧾 Empleado (Caja)</button>
+      <div class="login-error" id="bienError"></div>
+      <p style="color:var(--muted);font-size:0.75rem;margin-top:8px">El empleado entra con el PIN que le dio el dueño.</p>
+    </div>
+    <div id="rtFormDueno" style="display:none">
     <p class="sub">Iniciá sesión para abrir la caja</p>
     <input type="email" id="loginEmail" placeholder="Email" autocomplete="username">
     <input type="password" id="loginPass" placeholder="Contraseña" autocomplete="current-password">
@@ -399,6 +408,8 @@ var __rtPWA = (function() {
       Iniciar sesión con Google
     </button>
     <button class="btn-secondary" id="loginCajeroBtn" style="width:100%;margin-top:8px;color:var(--naranja);border-color:var(--naranja);">🧾 Ingresar como Punto de Venta</button>
+    <button class="btn-secondary" id="bienVolver" type="button" style="width:100%;margin-top:12px">← Volver</button>
+    </div>
   </div>
 </div>
 
@@ -975,7 +986,7 @@ var __rtPWA = (function() {
       actualizarEstadoConexion(navigator.onLine);
       await actualizarBadge();
     } else {
-      rolActual = null;
+      rolActual = null; try{ rtBienvenidaVer(false,true); }catch(_){}
       document.getElementById('app').classList.remove('active');
       document.getElementById('loginScreen').classList.add('active');
     }
@@ -986,6 +997,16 @@ var __rtPWA = (function() {
       .catch(() => { document.getElementById('loginError').textContent = 'Email o contraseña incorrectos'; });
   });
   document.getElementById('logoutBtn').addEventListener('click', () => auth.signOut());
+  /* ── Bienvenida por rol (v1.10): Dueño / Empleado (Caja). El empleado usa el PIN del punto de venta; no cambia reglas ni datos ── */
+  function rtBienvenidaVer(f,keep){ document.getElementById('rtBienvenida').style.display=f?'none':''; document.getElementById('rtFormDueno').style.display=f?'':'none'; const le=document.getElementById('loginError'); document.getElementById('bienError').textContent=keep?le.textContent:''; le.textContent=''; }
+  document.getElementById('bienDueno').addEventListener('click',()=>rtBienvenidaVer(true));
+  document.getElementById('bienVolver').addEventListener('click',()=>rtBienvenidaVer(false));
+  document.getElementById('bienCaja').addEventListener('click',()=>{
+    let n=null; try{ n=localStorage.getItem('rt_negocio'); }catch(_){}
+    if(!n){ document.getElementById('bienError').textContent='Pedile al dueño el link de acceso (Configuración → Acceso Punto de Venta) y abrilo una vez en este celular.'; return; }
+    document.getElementById('bienError').textContent='';
+    document.getElementById('loginCajeroBtn').click();
+  });
   document.getElementById('loginGoogleBtn').addEventListener('click', () => {
     auth.signInWithPopup((window.rtProv||function(p){return p})(new firebase.auth.GoogleAuthProvider())).catch(() => { document.getElementById('loginError').textContent = 'No se pudo iniciar sesión con Google'; });
   });
@@ -1003,7 +1024,7 @@ var __rtPWA = (function() {
     if(pin.length<4){ document.getElementById('pinCajeroError').textContent='PIN incorrecto'; return; }
     window._pinPend=pin;
     document.getElementById('modalPinCajero').classList.remove('active');
-    auth.signInAnonymously().catch(()=>{ window._pinPend=null; document.getElementById('loginError').textContent='No se pudo ingresar'; });
+    auth.signInAnonymously().catch(()=>{ window._pinPend=null; document.getElementById('loginError').textContent='No se pudo ingresar'; try{document.getElementById('bienError').textContent='No se pudo ingresar';}catch(_){} });
   });
   document.getElementById('copiarLinkCajeroBtn').addEventListener('click',()=>{
     const el=document.getElementById('cfgLinkCajero'); el.select();
