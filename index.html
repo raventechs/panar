@@ -1,7 +1,8 @@
 <!DOCTYPE html>
 <!--
   ════════════════════════════════════════════════════════════
-  PANAR — CAJA REGISTRADORA PARA PANADERÍAS — v1.10
+  PANAR — CAJA REGISTRADORA PARA PANADERÍAS — v1.11
+  v1.11 (18/11/2026): VERSIÓN DE PRUEBA MÍNIMA (primeros 3 días: Caja solo con importe + medio de pago, botones grandes tipo PuntoVenta; después aparecen los botones de productos; Historial visible) para cuentas nuevas (desde el 18/11): Caja con «importe libre», Gastos, Facturación, Cierre del día y pestaña «Adicionales» (pedir stock, recetas, sucursales, panel del dueño por WhatsApp). Las cuentas anteriores no cambian. Raven la activa/desactiva con el interruptor «Versión de prueba mínima» del menú oculto. Sin cambios en reglas ni datos.
   v1.10 (17/11/2026): PANTALLA DE BIENVENIDA POR ROL: botones Dueño / Empleado (Caja); el empleado entra con el PIN del punto de venta. No cambia reglas ni datos.
   v1.9 (8/11/2026): ADICIONAL «VARIAS SUCURSALES»: cada sucursal tiene sus propias ventas, gastos y cierres (productos, insumos, recetas y configuración compartidos); el cajero entra con el link de su sucursal. El admin lo activa con botones (1 / Hasta 3 / Todas) en Menú admin → clientes. Sin activar, todo funciona igual que antes. Requiere publicar firestore.rules.
   v1.8 (8/11/2026): TARJETA «TUS PRIMEROS PASOS» en Caja, solo durante la prueba gratis: 4 pasos (cargar productos, cobrar la primera venta, mirar Reportes, probar el Cierre de caja) que se tildan solos; se puede ocultar. Se guarda en el celular, no toca datos ni reglas.
@@ -225,6 +226,15 @@
   .rt-chk .paso .ck{flex-shrink:0;width:24px;height:24px;border-radius:50%;border:2px solid #9aa4b2;display:flex;align-items:center;justify-content:center;font-size:14px;color:#fff}
   .rt-chk .paso.ok{opacity:.65;text-decoration:line-through;cursor:default}
   .rt-chk .paso.ok .ck{background:#27ae60;border-color:#27ae60}
+  /* Versión mínima: botones grandes tipo PuntoVenta */
+  body.rt-min .productos-grid{grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:.7rem}
+  body.rt-min .producto-btn{padding:.9rem .5rem;border-radius:20px;min-height:104px;justify-content:center}
+  body.rt-min .producto-btn .producto-emoji{font-size:2.1rem}
+  body.rt-min .producto-btn .producto-nombre{font-size:.95rem}
+  body.rt-min .producto-btn .producto-precio{font-size:.9rem}
+  body.rt-min #rtImpLibreInput{font-size:1.5rem;font-weight:800;padding:14px 16px}
+  body.rt-min #rtImpLibreBtn{font-size:1rem;padding:14px 18px}
+  body.rt-min .pago-chip{padding:14px 8px;font-size:.95rem;font-weight:700;border-width:2px}
 </style>
 <script>
 // RavenTechs PWA Banner v1.1 — en el HEAD para capturar beforeinstallprompt temprano
@@ -442,6 +452,7 @@ var __rtPWA = (function() {
     <button class="tab-btn" data-view="reportes">Reportes</button>
     <button class="tab-btn" data-view="historial">Historial</button>
     <button class="tab-btn" data-view="dueno" id="rtTabDueno" style="display:none;">🔒 Dueño</button>
+    <button class="tab-btn" data-view="adicionales" id="rtTabAdic" style="display:none;">➕ Adicionales</button>
     <button class="tab-btn" data-view="configuracion">Configuración</button>
   </nav>
 
@@ -461,6 +472,10 @@ var __rtPWA = (function() {
           <div class="carrito-box">
             <h3>🧾 Venta actual</h3>
             <div class="carrito-items" id="carritoItems"><div class="empty-cart">Tocá un producto para agregarlo</div></div>
+            <div id="rtImporteLibre" style="display:none;margin:8px 0">
+              <div style="font-size:0.78rem;color:var(--muted);margin-bottom:4px">¿No está en los botones? Cobrá un importe:</div>
+              <div style="display:flex;gap:8px"><input type="number" id="rtImpLibreInput" inputmode="decimal" min="1" placeholder="Importe $" style="flex:1;padding:10px 12px;border-radius:18px;border:1px solid var(--border);background:var(--bg3);color:var(--crema);font-size:0.95rem"><button class="btn-secondary" id="rtImpLibreBtn" type="button" style="width:auto;padding:10px 16px">+ Agregar</button></div>
+            </div>
             <div class="carrito-total"><span>Total</span><span id="carritoTotal">$0</span></div>
             <div class="pago-row" id="pagoRow">
               <button class="pago-chip active" data-pago="efectivo">Efectivo</button>
@@ -484,6 +499,10 @@ var __rtPWA = (function() {
           </div>
         </div>
       </div>
+    </section>
+
+    <section class="view" id="view-adicionales">
+      <div id="rtAdicionales" style="padding:4px 2px"></div>
     </section>
 
     <section class="view" id="view-menu">
@@ -701,6 +720,8 @@ var __rtPWA = (function() {
     <h3>⚙️ Features Plus (RavenTechs)</h3>
     <div class="toggle-row"><div class="toggle-row-name">Control de stock</div><label class="switch"><input type="checkbox" id="flagStock"><span class="slider-switch"></span></label></div>
     <div class="toggle-row"><div class="toggle-row-name">Recetas de producción</div><label class="switch"><input type="checkbox" id="flagRecetas"><span class="slider-switch"></span></label></div>
+    <div class="toggle-row"><div class="toggle-row-name">🎯 Versión de prueba mínima</div><label class="switch"><input type="checkbox" id="flagMinimo"><span class="slider-switch"></span></label></div>
+    <div class="toggle-row"><div class="toggle-row-name">🥖 Botones de productos (versión mínima)</div><label class="switch"><input type="checkbox" id="flagBotones"><span class="slider-switch"></span></label></div>
     <div class="toggle-row"><div class="toggle-row-name">Gastos del turno</div><label class="switch"><input type="checkbox" id="flagGastos"><span class="slider-switch"></span></label></div>
     <div style="font-weight:700;margin:16px 0 6px">👥 Clientes y prueba gratis</div>
     <div id="rtAdmClientes" style="max-height:260px;overflow:auto;font-size:13px">Cargando…</div>
@@ -842,7 +863,7 @@ var __rtPWA = (function() {
   let productos = [], carrito = [], metodoPago = 'efectivo';
   let categoriaActiva = 'Todas', grupoActivo = null;
   let productoSeleccionado = null, editandoProductoId = null;
-  let featuresActuales = { stockHabilitado:false, recetasHabilitado:false, gastosHabilitado:false };
+  let featuresActuales = { stockHabilitado:false, recetasHabilitado:false, gastosHabilitado:false, planMinimo:false, botonesDesde:0 };
   let rolActual = null, pinCajeroActual = '2468', whatsappNumero = '';
   let insumos = [], editandoInsumoId = null;
   let gastosDelTurno = [], ventasHistorialActual = [];
@@ -1498,7 +1519,19 @@ var __rtPWA = (function() {
       document.getElementById('cfgWhatsapp').value=c.whatsapp||'';
       pinCajeroActual=c.pinCajero||'2468';
       whatsappNumero=c.whatsapp||'';
-      featuresActuales=Object.assign({stockHabilitado:false,recetasHabilitado:false,gastosHabilitado:false},c.features||{});
+      featuresActuales=Object.assign({stockHabilitado:false,recetasHabilitado:false,gastosHabilitado:false,planMinimo:false,botonesDesde:0},c.features||{});
+      /* Versión de prueba mínima (v1.11): solo cuentas NUEVAS (creadas desde el 18/11/2026), una única vez. Las cuentas anteriores no se tocan. */
+      try{
+        const cu=auth.currentUser;
+        if(cu&&!cu.isAnonymous&&rolActual==='dueño'&&!(c.features&&c.features.planMinimo!==undefined)){
+          const alta=cu.metadata&&cu.metadata.creationTime?new Date(cu.metadata.creationTime).getTime():0;
+          if(alta>=new Date('2026-11-18T00:00:00-03:00').getTime()){
+            const bd=alta+3*86400000;
+            featuresActuales=Object.assign({},featuresActuales,{planMinimo:true,gastosHabilitado:true,botonesDesde:bd});
+            col('configuracion').doc('general').set({features:{planMinimo:true,gastosHabilitado:true,botonesDesde:bd}},{merge:true}).catch(()=>{});
+          }
+        }
+      }catch(_){}
       renderPlusStatus();
       document.getElementById('gastosSection').style.display=featuresActuales.gastosHabilitado?'':'none';
     });
@@ -1607,6 +1640,65 @@ var __rtPWA = (function() {
   document.getElementById('restablecerCatalogoBtn').addEventListener('click', ejecutarRestablecerCatalogo);
   document.getElementById('restablecerCatalogoBtn2').addEventListener('click', ejecutarRestablecerCatalogo);
 
+  /* ── Versión de prueba mínima (v1.11): Caja con botones precargados + importe libre, Gastos, Facturación, Cierre del día y una pestaña «Adicionales» para pedir el resto por WhatsApp ── */
+  const RT_WA='5491136547592';
+  function rtMin(){ return !!featuresActuales.planMinimo; }
+  /* En la versión mínima los primeros días se cobra solo con importe + medio de pago (como PuntoVenta); los botones de productos se activan a los 3 días o antes si Raven lo pide */
+  function rtBotones(){ return !rtMin() || Date.now()>=(featuresActuales.botonesDesde||0); }
+  const RT_PASOS_ORIG=RT_PASOS.slice();
+  function rtAplicarMinimo(){
+    const m=rtMin(), dueno=(rolActual==='dueño');
+    document.body.classList.toggle('rt-min',m);
+    const ta=document.getElementById('rtTabAdic'); if(ta) ta.style.display=(m&&dueno)?'':'none';
+    const tr=document.querySelector('.tab-btn[data-view="reportes"]'); if(tr&&dueno) tr.textContent=m?'📊 Facturación':'Reportes';
+    const gs=document.getElementById('gastosSection'); if(gs&&m) gs.style.display='';
+    const il=document.getElementById('rtImporteLibre'); if(il) il.style.display=m?'':'none';
+    const bot=rtBotones();
+    const izq=document.querySelector('.caja-layout > div:first-child'); if(izq) izq.style.display=bot?'':'none';
+    const cl=document.querySelector('.caja-layout'); if(cl) cl.style.gridTemplateColumns=bot?'':'1fr';
+    const tm=document.querySelector('.tab-btn[data-view="menu"]'); if(tm&&dueno) tm.style.display=bot?'':'none';
+    const il1=il&&il.firstElementChild; if(il1) il1.textContent=bot?'¿No está en los botones? Cobrá un importe:':'Poné el importe, elegí cómo paga y cobrá. Los botones de productos se suman en unos días.';
+    RT_PASOS[0]=m?{k:'gasto',t:'Anotá un gasto en «Caja»',ir:function(){rtIrTab('caja');var b=document.getElementById('nuevoGastoBtn');if(b)b.scrollIntoView({behavior:'smooth',block:'center'});}}:RT_PASOS_ORIG[0];
+    if(m&&dueno) rtRenderAdicionales();
+    try{ rtChkPintar(); }catch(_){}
+  }
+  window.rtAplicarMinimo=rtAplicarMinimo;
+  function rtPedirAdicional(nombre){
+    const em=(auth.currentUser&&auth.currentUser.email)||'';
+    const t='Hola! Quiero sumar el adicional «'+nombre+'» a mi PanAR. Mi usuario: '+em;
+    window.open('https://wa.me/'+RT_WA+'?text='+encodeURIComponent(t),'_blank');
+  }
+  window.rtPedirAdicional=rtPedirAdicional;
+  function rtRenderAdicionales(){
+    const box=document.getElementById('rtAdicionales'); if(!box) return;
+    const f=featuresActuales;
+    const L=[
+      ['📦','Stock e insumos','Controlá lo que tenés y enterate cuándo falta algo.',!!f.stockHabilitado],
+      ['🧪','Recetas de producción','Calculá cuánto sale producir cada cosa y tu margen.',!!f.recetasHabilitado],
+      ['🏪','Varias sucursales','Ventas, gastos y cierres separados por local.',rtLimiteSuc>1],
+      ['📊','Panel del dueño','Mirá todos tus locales juntos, desde tu celular.',!!rtPlusDueno]
+    ];
+    box.innerHTML='<h3 style="font-size:1.05rem;margin:6px 0">➕ Sumá lo que necesites</h3>'
+      +'<p style="font-size:0.84rem;color:var(--muted);margin-bottom:12px">Tu PanAR ya tiene lo esencial: cobrar, anotar gastos, ver cuánto facturás y cerrar el día. Cuando tu negocio lo pida, se suman estos adicionales. Pedilos y te los activamos sin perder ningún dato.</p>'
+      +L.map(function(a){
+        return '<div style="border:1px solid var(--border);border-radius:16px;padding:12px;margin-bottom:10px;background:var(--bg2)">'
+          +'<div style="font-weight:700">'+a[0]+' '+a[1]+'</div>'
+          +'<div style="font-size:0.8rem;color:var(--muted);margin:4px 0 8px">'+a[2]+'</div>'
+          +(a[3]?'<div style="color:#27ae60;font-weight:700;font-size:0.85rem">✅ Activado</div>'
+               :'<button class="btn-secondary" type="button" style="width:auto;padding:8px 14px;font-size:0.82rem" onclick="rtPedirAdicional(\''+a[1].replace(/'/g,'')+'\')">Pedir este adicional</button>')
+          +'</div>';
+      }).join('');
+  }
+  document.getElementById('rtImpLibreBtn').addEventListener('click',()=>{
+    const inp=document.getElementById('rtImpLibreInput'); const v=parseFloat(inp.value);
+    if(!(v>0)||v>10000000){ toast('Poné un importe mayor a 0'); return; }
+    carrito.push({productoId:'libre',nombre:'Importe',categoria:'Otros',tamano:'Libre',precio:Math.round(v*100)/100,cantidad:1});
+    inp.value=''; renderCarrito();
+  });
+  document.getElementById('modalGastoConfirm').addEventListener('click',()=>{
+    const d=document.getElementById('gastoDesc').value.trim(), m=parseFloat(document.getElementById('gastoMonto').value)||0;
+    if(d&&m>0) setTimeout(()=>{ try{ rtChkMarcar('gasto'); }catch(_){} },400);
+  },true);
   function renderPlusStatus() {
     document.querySelectorAll('.plus-status').forEach(el=>{ el.textContent=featuresActuales[el.dataset.flag]?'✅':'🔒'; });
     aplicarTabsPlus();
@@ -1616,6 +1708,7 @@ var __rtPWA = (function() {
   function aplicarTabsPlus() {
     document.querySelector('.tab-btn[data-view="stock"]').style.display=featuresActuales.stockHabilitado?'':'none';
     document.querySelector('.tab-btn[data-view="recetas"]').style.display=(featuresActuales.recetasHabilitado&&rolActual==='dueño')?'':'none';
+    try{ rtAplicarMinimo(); }catch(_){}
   }
 
   /* ════ GASTOS ════ */
@@ -1765,6 +1858,7 @@ var __rtPWA = (function() {
       document.getElementById('flagStock').checked=!!featuresActuales.stockHabilitado;
       document.getElementById('flagRecetas').checked=!!featuresActuales.recetasHabilitado;
       document.getElementById('flagGastos').checked=!!featuresActuales.gastosHabilitado;
+      document.getElementById('flagMinimo').checked=!!featuresActuales.planMinimo;document.getElementById('flagBotones').checked=Date.now()>=(featuresActuales.botonesDesde||0);
       document.getElementById('modalFeatures').classList.add('active'); rtAdmClientes();
     } else { document.getElementById('pinError').textContent='PIN incorrecto'; }
   });
@@ -1897,7 +1991,7 @@ var __rtPWA = (function() {
   };
   document.getElementById('modalFeaturesCancel').addEventListener('click', ()=>document.getElementById('modalFeatures').classList.remove('active'));
   document.getElementById('modalFeaturesGuardar').addEventListener('click', ()=>{
-    const nuevas={ stockHabilitado:document.getElementById('flagStock').checked, recetasHabilitado:document.getElementById('flagRecetas').checked, gastosHabilitado:document.getElementById('flagGastos').checked };
+    const nuevas={ stockHabilitado:document.getElementById('flagStock').checked, recetasHabilitado:document.getElementById('flagRecetas').checked, gastosHabilitado:document.getElementById('flagGastos').checked, planMinimo:document.getElementById('flagMinimo').checked, botonesDesde:(document.getElementById('flagBotones').checked?0:(Date.now()<(featuresActuales.botonesDesde||0)?featuresActuales.botonesDesde:Date.now()+3*86400000)) };
     col('configuracion').doc('general').set({features:nuevas},{merge:true}).then(()=>{
       featuresActuales=nuevas; renderPlusStatus(); toast('Features actualizadas'); document.getElementById('modalFeatures').classList.remove('active');
     });
